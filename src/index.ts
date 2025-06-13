@@ -2,22 +2,22 @@ import { Elysia } from "elysia";
 import cors from "@elysiajs/cors";
 import { jwt } from "@elysiajs/jwt";
 import { cookie } from "@elysiajs/cookie";
-import staicPlugin from "@elysiajs/static";
+import staticPlugin from "@elysiajs/static";
 import r from "./routes";
 
 const app = new Elysia()
   .use(cookie())
   .use(
-    staicPlugin({
+    staticPlugin({
       prefix: "/",
       assets: "./public",
     })
   )
-  .use(jwt({ name: "jwt", secret: process.env.JWT_SECRET }))
+  .use(jwt({ name: "jwt", secret: process.env.JWT_SECRET as string }))
   .use(
     cors({
       origin: process.env.CORS_ORIGIN || "*",
-      cedentials: true,
+      credentials: true,
     })
   )
   .use(r)
