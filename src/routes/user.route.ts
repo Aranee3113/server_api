@@ -6,4 +6,5 @@ export const user_route = (app: Elysia) =>
     app
       .get("", user_controller.getUser)
       .get("/:id", user_controller.getUserById)
+      .delete("/:id", user_controller.deleteUserById)
   );
