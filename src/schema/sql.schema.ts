@@ -5,3 +5,7 @@ export const registerSchema = t.Object({
   user_username: t.String(),
   user_password: t.String(),
 });
+export const loginSchema = t.Object({
+  user_username: t.String(),
+  user_password: t.String(),
+});
