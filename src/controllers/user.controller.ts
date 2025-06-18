@@ -73,8 +73,6 @@ export const user_controller = {
     }
   },
 
- 
-
   // แก้ไขข้อมูลผู้ใช้ตาม ID
   updateUserById: async (ctx: any) => {
     const userId = ctx.params.id;
