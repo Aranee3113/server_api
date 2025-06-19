@@ -137,7 +137,6 @@ export const post_controller = {
       };
     }
 
-    // ถ้ามี post_timestamp ให้จัดรูปแบบ ถ้าไม่มีกำหนดเวลาปัจจุบันอัตโนมัติ
     post_timestamp = post_timestamp
       ? format(new Date(post_timestamp), "yyyy-MM-dd HH:mm:ss")
       : format(new Date(), "yyyy-MM-dd HH:mm:ss");
@@ -199,6 +198,84 @@ export const post_controller = {
         status: 200,
         success: true,
         message: "Post deleted successfully",
+      };
+    } catch (err) {
+      console.log(err);
+      return {
+        status: 500,
+        success: false,
+        message: "Internal server error",
+      };
+    }
+  },
+
+  getPostIsActive: async (ctx: any) => {
+    try {
+      const sql = `
+                    SELECT
+                        post.post_name, 
+                        post.post_description, 
+                        post.post_timestamp, 
+                        user.user_id, 
+                        user.user_name, 
+                        user.user_username, 
+                        post.post_id, 
+                        post.is_active
+                    FROM
+                        user
+                        INNER JOIN
+                        post
+                        ON 
+                            user.user_id = post.user_id
+                        WHERE 
+                            post.is_active = 1
+      `;
+      const [rows]: any = await pool.query(sql);
+
+      if (!rows || rows.length === 0) {
+        return {
+          status: 204,
+          success: true,
+          message: "Post data not found ",
+          data: [],
+        };
+      }
+
+      return {
+        status: 200,
+        success: true,
+        message: "Success",
+        data: rows,
+      };
+    } catch (error) {}
+  },
+
+  updateStatusActive: async (ctx: any) => {
+    const postId = parseInt(ctx.params.id);
+    console.log(postId);
+
+    try {
+      const sql = `
+      UPDATE post
+      SET is_active = 1
+      WHERE post_id = ?
+    `;
+
+      const [result]: any = await pool.query(sql, [postId]);
+      console.log(result);
+
+      if (result.affectedRows === 0) {
+        return {
+          status: 404,
+          success: false,
+          message: "Post not found",
+        };
+      }
+
+      return {
+        status: 200,
+        success: true,
+        message: "Post updated to active successfully",
       };
     } catch (err) {
       console.log(err);
