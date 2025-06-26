@@ -17,6 +17,7 @@
     "mysql2": "^3.14.1"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
     "bun-types": "latest"
   },
   "module": "src/index.js"

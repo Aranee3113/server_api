@@ -58,7 +58,7 @@ export const post_controller = {
   getAllposts: async (ctx: any) => {
     try {
       const sql = `
-        SELECT post_id, post_name, post_description, post_timestamp, user_id
+        SELECT post_id, post_name, post_description, post_timestamp, user_id ,is_active
         FROM post
       `;
       const [rows]: any = await pool.query(sql);
@@ -93,7 +93,7 @@ export const post_controller = {
     const postId = parseInt(ctx.params.id);
     try {
       const sql = `
-        SELECT post_id, post_name, post_description, post_timestamp, user_id
+        SELECT post_id, post_name, post_description, post_timestamp, user_id ,is_active
         FROM post
         WHERE post_id = ?
       `;
@@ -127,7 +127,8 @@ export const post_controller = {
   // แก้ไขข้อมูลโพสต์โดยใช้ post_id
   updatepostById: async (ctx: any) => {
     const postId = parseInt(ctx.params.id);
-    let { post_name, post_description, post_timestamp, user_id } = ctx.body;
+    let { post_name, post_description, post_timestamp, user_id, is_active } =
+      ctx.body;
 
     if (!post_name || !post_description || !user_id) {
       return {
@@ -144,7 +145,7 @@ export const post_controller = {
     try {
       const sql = `
         UPDATE post
-        SET post_name = ?, post_description = ?, post_timestamp = ?, user_id = ?
+        SET post_name = ?, post_description = ?, post_timestamp = ?, user_id = ? , is_active = ?
         WHERE post_id = ?
       `;
 
@@ -153,6 +154,7 @@ export const post_controller = {
         post_description,
         post_timestamp,
         user_id,
+        is_active,
         postId,
       ]);
 
