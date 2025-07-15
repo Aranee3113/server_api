@@ -7,23 +7,26 @@ import path from "path";
 // Helper function สำหรับจัดการไฟล์รูปภาพ
 const fileHelpers = {
   // บันทึกไฟล์รูปภาพ
-  saveImageFile: async (file: File, uploadDir: string = "uploads"): Promise<string> => {
+  saveImageFile: async (
+    file: File,
+    uploadDir: string = "uploads"
+  ): Promise<string> => {
     try {
       // สร้างชื่อไฟล์ที่ไม่ซ้ำ
       const timestamp = Date.now();
       const randomString = Math.random().toString(36).substring(2, 15);
       const fileExtension = path.extname(file.name);
       const fileName = `${timestamp}_${randomString}${fileExtension}`;
-      
+
       // สร้าง directory ถ้ายังไม่มี
       await fs.mkdir(uploadDir, { recursive: true });
-      
+
       // เขียนไฟล์
       const filePath = path.join(uploadDir, fileName);
       const arrayBuffer = await file.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       await fs.writeFile(filePath, buffer);
-      
+
       return fileName;
     } catch (error) {
       console.error("Error saving file:", error);
@@ -32,10 +35,13 @@ const fileHelpers = {
   },
 
   // ลบไฟล์รูปภาพ
-  deleteImageFile: async (fileName: string, uploadDir: string = "uploads"): Promise<boolean> => {
+  deleteImageFile: async (
+    fileName: string,
+    uploadDir: string = "uploads"
+  ): Promise<boolean> => {
     try {
       if (!fileName) return true;
-      
+
       const filePath = path.join(uploadDir, fileName);
       await fs.unlink(filePath);
       return true;
@@ -47,9 +53,15 @@ const fileHelpers = {
 
   // ตรวจสอบว่าไฟล์เป็นรูปภาพหรือไม่
   isValidImageFile: (file: File): boolean => {
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    const allowedTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+    ];
     const maxSize = 5 * 1024 * 1024; // 5MB
-    
+
     return allowedTypes.includes(file.type) && file.size <= maxSize;
   },
 
@@ -63,7 +75,7 @@ const fileHelpers = {
       console.error("Error getting post images:", error);
       return [];
     }
-  }
+  },
 };
 
 export const post_controller = {
@@ -75,7 +87,7 @@ export const post_controller = {
         post_description,
         post_timestamp,
         user_id,
-        post_images, // array of image files
+        post_images,
       } = ctx.body;
 
       if (!post_name || !post_description || !user_id) {
@@ -113,10 +125,13 @@ export const post_controller = {
           INSERT INTO post_image (post_image_path, post_id)
           VALUES (?, ?)
         `;
-        
+
         for (const imageFile of post_images) {
           // ตรวจสอบว่าเป็นไฟล์รูปภาพที่ถูกต้อง
-          if (imageFile instanceof File && fileHelpers.isValidImageFile(imageFile)) {
+          if (
+            imageFile instanceof File &&
+            fileHelpers.isValidImageFile(imageFile)
+          ) {
             try {
               const savedFileName = await fileHelpers.saveImageFile(imageFile);
               await pool.query(sqlInsertImage, [savedFileName, post_id]);
@@ -131,7 +146,7 @@ export const post_controller = {
                 message: "Failed to save image files",
               };
             }
-          } else if (typeof imageFile === 'string') {
+          } else if (typeof imageFile === "string") {
             // กรณีที่ส่งมาเป็น string (path ของรูปภาพที่มีอยู่แล้ว)
             await pool.query(sqlInsertImage, [imageFile, post_id]);
             savedImagePaths.push(imageFile);
@@ -194,10 +209,10 @@ export const post_controller = {
 
       const updatedRows = rows.map((row: any) => ({
         ...row,
-        post_images: row.post_image_paths 
-          ? row.post_image_paths.split(',').map((path: string) => ({
+        post_images: row.post_image_paths
+          ? row.post_image_paths.split(",").map((path: string) => ({
               filename: path,
-              url: `http://localhost:8008/uploads/${path}`
+              url: `http://localhost:8008/uploads/${path}`,
             }))
           : [],
         post_image_paths: undefined, // ลบ field นี้ออก
@@ -254,10 +269,10 @@ export const post_controller = {
         message: "Success",
         data: {
           ...post,
-          post_images: post.post_image_paths 
-            ? post.post_image_paths.split(',').map((path: string) => ({
+          post_images: post.post_image_paths
+            ? post.post_image_paths.split(",").map((path: string) => ({
                 filename: path,
-                url: `http://localhost:8008/uploads/${path}`
+                url: `http://localhost:8008/uploads/${path}`,
               }))
             : [],
           post_image_paths: undefined, // ลบ field นี้ออก
@@ -276,14 +291,14 @@ export const post_controller = {
   // แก้ไขข้อมูลโพสต์โดยใช้ post_id
   updatepostById: async (ctx: any) => {
     const postId = parseInt(ctx.params.id);
-    let { 
-      post_name, 
-      post_description, 
-      post_timestamp, 
-      user_id, 
+    let {
+      post_name,
+      post_description,
+      post_timestamp,
+      user_id,
       post_images, // new image files
       keep_images, // array of existing image filenames to keep
-      remove_images // array of image filenames to remove
+      remove_images, // array of image filenames to remove
     } = ctx.body;
 
     if (!post_name || !post_description || !user_id) {
@@ -334,7 +349,7 @@ export const post_controller = {
           if (existingImages.includes(imageToRemove)) {
             // ลบจากฐานข้อมูล
             await pool.query(
-              `DELETE FROM post_image WHERE post_id = ? AND post_image_path = ?`, 
+              `DELETE FROM post_image WHERE post_id = ? AND post_image_path = ?`,
               [postId, imageToRemove]
             );
             // ลบไฟล์
@@ -350,9 +365,12 @@ export const post_controller = {
           INSERT INTO post_image (post_image_path, post_id)
           VALUES (?, ?)
         `;
-        
+
         for (const imageFile of post_images) {
-          if (imageFile instanceof File && fileHelpers.isValidImageFile(imageFile)) {
+          if (
+            imageFile instanceof File &&
+            fileHelpers.isValidImageFile(imageFile)
+          ) {
             try {
               const savedFileName = await fileHelpers.saveImageFile(imageFile);
               await pool.query(sqlInsertImage, [savedFileName, postId]);
@@ -441,7 +459,7 @@ export const post_controller = {
   // ลบรูปภาพเฉพาะ
   deleteImageById: async (ctx: any) => {
     const { postId, imagePath } = ctx.params;
-    
+
     try {
       await pool.query("START TRANSACTION");
 
@@ -450,7 +468,10 @@ export const post_controller = {
         SELECT post_image_path FROM post_image 
         WHERE post_id = ? AND post_image_path = ?
       `;
-      const [checkResult]: any = await pool.query(checkSql, [postId, imagePath]);
+      const [checkResult]: any = await pool.query(checkSql, [
+        postId,
+        imagePath,
+      ]);
 
       if (!checkResult || checkResult.length === 0) {
         await pool.query("ROLLBACK");
@@ -522,10 +543,10 @@ export const post_controller = {
 
       const updatedRows = rows.map((row: any) => ({
         ...row,
-        post_images: row.post_image_paths 
-          ? row.post_image_paths.split(',').map((path: string) => ({
+        post_images: row.post_image_paths
+          ? row.post_image_paths.split(",").map((path: string) => ({
               filename: path,
-              url: `http://localhost:8008/uploads/${path}`
+              url: `http://localhost:8008/uploads/${path}`,
             }))
           : [],
         post_image_paths: undefined, // ลบ field นี้ออก
