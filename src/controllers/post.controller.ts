@@ -5,6 +5,8 @@ import { format } from "date-fns";
 export const post_controller = {
   // เพิ่มโพสต์ใหม่
   createpost: async (ctx: any) => {
+    console.log(ctx);
+
     try {
       let { post_name, post_description, post_timestamp, user_id } = ctx.body;
 
@@ -257,11 +259,24 @@ export const post_controller = {
     console.log(postId);
 
     try {
-      const sql = `
-      UPDATE post
-      SET is_active = 1
-      WHERE post_id = ?
-    `;
+      const sql_active_status = "SELECT is_active FROM post WHERE post_id =?";
+      const [res_active]: any = await pool.query(sql_active_status, [postId]);
+
+      var active_status = res_active[0]?.is_active;
+      var sql = "";
+      if (active_status == 1) {
+        sql = `
+        UPDATE post
+        SET is_active = null
+        WHERE post_id = ?
+      `;
+      } else {
+        sql = `
+        UPDATE post
+        SET is_active = 1
+        WHERE post_id = ?
+      `;
+      }
 
       const [result]: any = await pool.query(sql, [postId]);
       console.log(result);

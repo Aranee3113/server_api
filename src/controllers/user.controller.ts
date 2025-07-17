@@ -80,7 +80,7 @@ export const user_controller = {
     const is_admin = 0;
 
     try {
-      let hashedPassword ;
+      let hashedPassword;
       if (user_password) {
         hashedPassword = await bcrypt.hash(user_password, 10);
       }
@@ -141,6 +141,47 @@ export const user_controller = {
         status: 200,
         success: true,
         message: "User deleted successfully",
+      };
+    } catch (err) {
+      console.log(err);
+      return {
+        status: 500,
+        success: false,
+        message: "Internal server error",
+      };
+    }
+  },
+  addUser: async (ctx: any) => {
+    const { user_name, user_username, user_password } = ctx.body;
+    const is_admin = 0;
+
+    try {
+      let hashedPassword;
+      if (user_password) {
+        hashedPassword = await bcrypt.hash(user_password, 10);
+      }
+
+      const sql = `
+  INSERT INTO user (user_name, user_username, user_password, is_admin)
+  VALUES (?, ?, ?, ?)
+`;
+
+      const values = [user_name, user_username, hashedPassword, is_admin];
+
+      const [result]: any = await pool.query(sql, values);
+
+      if (result.affectedRows === 0) {
+        return {
+          status: 404,
+          success: false,
+          message: "User not found",
+        };
+      }
+
+      return {
+        status: 200,
+        success: true,
+        message: "User updated successfully",
       };
     } catch (err) {
       console.log(err);
