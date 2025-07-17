@@ -8,7 +8,7 @@ export const pool = mysql.createPool({
   database: config.db.database,
   password: config.db.password,
   dateStrings: true,
+  queueLimit: 10,
 });
-
 
 export default pool;
