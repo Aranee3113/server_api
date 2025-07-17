@@ -1,306 +1,396 @@
 import { status } from "elysia";
 import pool from "../utils/db";
 import { format } from "date-fns";
+import { writeFile, unlink } from "fs/promises";
+import path from "path";
+import { v4 as uuidv4 } from "uuid";
+
+interface PostData {
+  post_id?: number;
+  post_name: string;
+  post_description: string;
+  post_timestamp: string;
+  user_id: string;
+  is_active?: number | null;
+  images?: Array<{
+    post_image_id: number;
+    post_image_path: string;
+  }>;
+}
+
+interface ApiResponse<T = any> {
+  status: number;
+  success: boolean;
+  message: string;
+  data?: T;
+}
+
+const generateUniqueFilename = (originalName: string): string => {
+  const ext = path.extname(originalName);
+  const uuid = uuidv4();
+  return `${uuid}${ext}`;
+};
+
+const formatTimestamp = (timestamp?: string): string => {
+  return timestamp 
+    ? format(new Date(timestamp), "yyyy-MM-dd HH:mm:ss")
+    : format(new Date(), "yyyy-MM-dd HH:mm:ss");
+};
+
+const createErrorResponse = (status: number, message: string): ApiResponse => ({
+  status,
+  success: false,
+  message
+});
+
+const createSuccessResponse = (status: number, message: string, data?: any): ApiResponse => ({
+  status,
+  success: true,
+  message,
+  ...(data && { data })
+});
+
+const saveImageFile = async (file: any, postId: number): Promise<void> => {
+  console.log('Processing file:', {
+    name: file?.name,
+    size: file?.size,
+    type: file?.type
+  });
+  
+  if (!file || !file.name || !file.size) {
+    console.log('Skipping invalid file');
+    return;
+  }
+  
+  try {
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const filename = generateUniqueFilename(file.name);
+    const filepath = path.join(process.cwd(), "public", "uploads", filename);
+    
+    console.log('Saving file to:', filepath);
+    await writeFile(filepath, buffer);
+    
+    console.log('Inserting to database:', { postId, filename });
+    const [result]: any = await pool.query(
+      `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
+      [postId, filename]
+    );
+    
+    console.log('Database insert result:', result);
+  } catch (error) {
+    console.error('Error saving image file:', error);
+    throw error; 
+  }
+};
+
+const deleteImageFile = async (imagePath: string): Promise<void> => {
+  const filepath = path.join(process.cwd(), "public", "uploads", imagePath);
+  await unlink(filepath).catch(() => {
+  });
+};
 
 export const post_controller = {
-  // เพิ่มโพสต์ใหม่
-  createpost: async (ctx: any) => {
-    console.log(ctx);
-
+// สร้างโพสต์
+  createpost: async (ctx: any): Promise<ApiResponse> => {
     try {
-      let { post_name, post_description, post_timestamp, user_id } = ctx.body;
+      const formData = await ctx.request.formData();
+      const post_name = formData.get("post_name")?.toString();
+      const post_description = formData.get("post_description")?.toString();
+      const user_id = formData.get("user_id")?.toString();
+      const post_timestamp_input = formData.get("post_timestamp")?.toString();
+      const files = formData.getAll("post_images");
+
+      console.log('FormData received:', {
+        post_name,
+        post_description,
+        user_id,
+        post_timestamp_input,
+        filesCount: files.length,
+        files: files.map(f => ({ name: f?.name, size: f?.size, type: f?.type }))
+      });
 
       if (!post_name || !post_description || !user_id) {
-        return {
-          status: 400,
-          success: false,
-          message: "Missing required fields",
-        };
+        return createErrorResponse(400, "Missing required fields");
       }
 
-      // ถ้ามี post_timestamp ให้จัดรูปแบบ ถ้าไม่มีกำหนดเวลาปัจจุบันอัตโนมัติ
-      post_timestamp = post_timestamp
-        ? format(new Date(post_timestamp), "yyyy-MM-dd HH:mm:ss")
-        : format(new Date(), "yyyy-MM-dd HH:mm:ss");
+      const post_timestamp = formatTimestamp(post_timestamp_input);
 
-      const sql = `
-        INSERT INTO post (post_name, post_description, post_timestamp, user_id)
-        VALUES (?, ?, ?, ?)
-      `;
-      const [result]: any = await pool.query(sql, [
+      const [result]: any = await pool.query(
+        `INSERT INTO post (post_name, post_description, post_timestamp, user_id)
+         VALUES (?, ?, ?, ?)`,
+        [post_name, post_description, post_timestamp, user_id]
+      );
+
+      const postId = result.insertId;
+      console.log('Post created with ID:', postId);
+
+      const savedImages = [];
+      for (const file of files) {
+        try {
+          await saveImageFile(file, postId);
+          if (file && file.name) {
+            savedImages.push(file.name);
+          }
+        } catch (imageError) {
+          console.error('Failed to save image:', file?.name, imageError);
+        }
+      }
+
+      console.log('Images saved:', savedImages);
+
+      return createSuccessResponse(201, "Post created successfully", {
+        post_id: postId,
         post_name,
         post_description,
         post_timestamp,
         user_id,
-      ]);
-
-      return {
-        status: 201,
-        success: true,
-        message: "Post created successfully",
-        data: {
-          post_id: result.insertId,
-          post_name,
-          post_description,
-          post_timestamp,
-          user_id,
-        },
-      };
-    } catch (err) {
-      console.log(err);
-      return {
-        status: 500,
-        success: false,
-        message: "Internal server error",
-      };
+        images_saved: savedImages.length
+      });
+    } catch (error) {
+      console.error("Error creating post:", error);
+      return createErrorResponse(500, "Internal server error");
     }
   },
 
-  // ดึงโพสต์ทั้งหมด
-  getAllposts: async (ctx: any) => {
+// แสดงโพสต์
+  getAllposts: async (ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
-        SELECT post_id, post_name, post_description, post_timestamp, user_id ,is_active
-        FROM post
+        SELECT 
+          p.post_id, 
+          p.post_name, 
+          p.post_description, 
+          p.post_timestamp, 
+          p.user_id, 
+          p.is_active,
+          (
+            SELECT JSON_ARRAYAGG(
+              JSON_OBJECT(
+                'post_image_id', i.post_image_id,
+                'post_image_path', i.post_image_path
+              )
+            )
+            FROM post_image i
+            WHERE i.post_id = p.post_id
+          ) AS images
+        FROM post p
+        ORDER BY p.post_timestamp DESC
       `;
+      
       const [rows]: any = await pool.query(sql);
-
+      
       if (!rows || rows.length === 0) {
-        return {
-          status: 204,
-          success: true,
-          message: "Post data empty",
-          data: [],
-        };
+        return createSuccessResponse(204, "No posts found", []);
+      }
+      
+      return createSuccessResponse(200, "Posts retrieved successfully", rows);
+    } catch (error) {
+      console.error("Error getting all posts:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+// แสดงโพสต์โดยใช้ ID
+  getpostById: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const postId = parseInt(ctx.params.id);
+      
+      if (isNaN(postId)) {
+        return createErrorResponse(400, "Invalid post ID");
       }
 
-      return {
-        status: 200,
-        success: true,
-        message: "Success",
-        data: rows,
-      };
-    } catch (err) {
-      console.log(err);
-      return {
-        status: 500,
-        success: false,
-        message: "Internal server error",
-      };
-    }
-  },
-
-  // ดึงโพสต์โดยใช้ ID
-  getpostById: async (ctx: any) => {
-    const postId = parseInt(ctx.params.id);
-    try {
       const sql = `
-        SELECT post_id, post_name, post_description, post_timestamp, user_id ,is_active
-        FROM post
-        WHERE post_id = ?
+        SELECT 
+          p.post_id, 
+          p.post_name, 
+          p.post_description, 
+          p.post_timestamp, 
+          p.user_id, 
+          p.is_active,
+          (
+            SELECT JSON_ARRAYAGG(
+              JSON_OBJECT(
+                'post_image_id', i.post_image_id,
+                'post_image_path', i.post_image_path
+              )
+            )
+            FROM post_image i
+            WHERE i.post_id = p.post_id
+          ) AS images
+        FROM post p
+        WHERE p.post_id = ?
       `;
+      
       const [rows]: any = await pool.query(sql, [postId]);
-
+      
       if (!rows || rows.length === 0) {
-        return {
-          status: 404,
-          success: false,
-          message: "Post not found",
-          data: null,
-        };
+        return createErrorResponse(404, "Post not found");
       }
-
-      return {
-        status: 200,
-        success: true,
-        message: "Success",
-        data: rows[0],
-      };
-    } catch (err) {
-      console.log(err);
-      return {
-        status: 500,
-        success: false,
-        message: "Internal server error",
-      };
+      
+      return createSuccessResponse(200, "Post retrieved successfully", rows[0]);
+    } catch (error) {
+      console.error("Error getting post by ID:", error);
+      return createErrorResponse(500, "Internal server error");
     }
   },
 
-  // แก้ไขข้อมูลโพสต์โดยใช้ post_id
-  updatepostById: async (ctx: any) => {
-    const postId = parseInt(ctx.params.id);
-    let { post_name, post_description, post_timestamp, user_id, is_active } =
-      ctx.body;
-
-    if (!post_name || !post_description || !user_id) {
-      return {
-        status: 400,
-        success: false,
-        message: "Missing required fields",
-      };
-    }
-
-    post_timestamp = post_timestamp
-      ? format(new Date(post_timestamp), "yyyy-MM-dd HH:mm:ss")
-      : format(new Date(), "yyyy-MM-dd HH:mm:ss");
-
+  // แก้ไขโพสต์ตาม id
+  updatepostById: async (ctx: any): Promise<ApiResponse> => {
     try {
-      const sql = `
-        UPDATE post
-        SET post_name = ?, post_description = ?, post_timestamp = ?, user_id = ? , is_active = ?
-        WHERE post_id = ?
-      `;
+      const postId = parseInt(ctx.params.id);
+      
+      if (isNaN(postId)) {
+        return createErrorResponse(400, "Invalid post ID");
+      }
 
-      const [result]: any = await pool.query(sql, [
-        post_name,
-        post_description,
-        post_timestamp,
-        user_id,
-        is_active,
-        postId,
-      ]);
+      const formData = await ctx.request.formData();
+      const post_name = formData.get("post_name")?.toString();
+      const post_description = formData.get("post_description")?.toString();
+      const user_id = formData.get("user_id")?.toString();
+      const post_timestamp_input = formData.get("post_timestamp")?.toString();
+      const files = formData.getAll("post_images");
+      const keepImageIds = formData.getAll("keep_image_ids").map(id => parseInt(id.toString()));
+
+      if (!post_name || !post_description || !user_id) {
+        return createErrorResponse(400, "Missing required fields");
+      }
+
+      const post_timestamp = formatTimestamp(post_timestamp_input);
+
+      await pool.query(
+        `UPDATE post SET post_name = ?, post_description = ?, post_timestamp = ?, user_id = ? 
+         WHERE post_id = ?`,
+        [post_name, post_description, post_timestamp, user_id, postId]
+      );
+
+      const [currentImages]: any = await pool.query(
+        `SELECT post_image_id, post_image_path FROM post_image WHERE post_id = ?`,
+        [postId]
+      );
+
+      const deletePromises = currentImages
+        .filter((img: any) => !keepImageIds.includes(img.post_image_id))
+        .map(async (img: any) => {
+          await deleteImageFile(img.post_image_path);
+          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [img.post_image_id]);
+        });
+
+      await Promise.all(deletePromises);
+
+      const saveImagePromises = files.map((file: any) => saveImageFile(file, postId));
+      await Promise.all(saveImagePromises);
+
+      return createSuccessResponse(200, "Post updated successfully");
+    } catch (error) {
+      console.error("Error updating post:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+  // ลบโพสต์
+  deletepostById: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const postId = parseInt(ctx.params.id);
+      
+      if (isNaN(postId)) {
+        return createErrorResponse(400, "Invalid post ID");
+      }
+
+      const [images]: any = await pool.query(
+        `SELECT post_image_path FROM post_image WHERE post_id = ?`,
+        [postId]
+      );
+
+      const deleteFilePromises = images.map((image: any) => 
+        deleteImageFile(image.post_image_path)
+      );
+      await Promise.all(deleteFilePromises);
+
+      // Delete from database
+      await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [postId]);
+      const [result]: any = await pool.query(`DELETE FROM post WHERE post_id = ?`, [postId]);
 
       if (result.affectedRows === 0) {
-        return {
-          status: 404,
-          success: false,
-          message: "Post not found",
-        };
+        return createErrorResponse(404, "Post not found");
       }
 
-      return {
-        status: 200,
-        success: true,
-        message: "Post updated successfully",
-      };
-    } catch (err) {
-      console.log(err);
-      return {
-        status: 500,
-        success: false,
-        message: "Internal server error",
-      };
+      return createSuccessResponse(200, "Post deleted successfully");
+    } catch (error) {
+      console.error("Error deleting post:", error);
+      return createErrorResponse(500, "Internal server error");
     }
   },
 
-  // ลบโพสต์โดยใช้ post_id
-  deletepostById: async (ctx: any) => {
-    const postId = parseInt(ctx.params.id);
-    try {
-      const sql = `DELETE FROM post WHERE post_id = ?`;
-      const [result]: any = await pool.query(sql, [postId]);
-
-      if (result.affectedRows === 0) {
-        return {
-          status: 404,
-          success: false,
-          message: "Post not found",
-        };
-      }
-
-      return {
-        status: 200,
-        success: true,
-        message: "Post deleted successfully",
-      };
-    } catch (err) {
-      console.log(err);
-      return {
-        status: 500,
-        success: false,
-        message: "Internal server error",
-      };
-    }
-  },
-
-  getPostIsActive: async (ctx: any) => {
+  // แสดงโพสต์ที่อนุมัติ
+  getPostIsActive: async (ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
-                    SELECT
-                        post.post_name, 
-                        post.post_description, 
-                        post.post_timestamp, 
-                        user.user_id, 
-                        user.user_name, 
-                        user.user_username, 
-                        post.post_id, 
-                        post.is_active
-                    FROM
-                        user
-                        INNER JOIN
-                        post
-                        ON 
-                            user.user_id = post.user_id
-                        WHERE 
-                            post.is_active = 1
+        SELECT
+          post.post_name, 
+          post.post_description, 
+          post.post_timestamp, 
+          user.user_id, 
+          user.user_name, 
+          user.user_username, 
+          post.post_id, 
+          post.is_active
+        FROM user
+        INNER JOIN post ON user.user_id = post.user_id
+        WHERE post.is_active = 1
+        ORDER BY post.post_timestamp DESC
       `;
+      
       const [rows]: any = await pool.query(sql);
-
+      
       if (!rows || rows.length === 0) {
-        return {
-          status: 204,
-          success: true,
-          message: "Post data not found ",
-          data: [],
-        };
+        return createSuccessResponse(204, "No active posts found", []);
       }
-
-      return {
-        status: 200,
-        success: true,
-        message: "Success",
-        data: rows,
-      };
-    } catch (error) {}
-  },
-
-  updateStatusActive: async (ctx: any) => {
-    const postId = parseInt(ctx.params.id);
-    console.log(postId);
-
-    try {
-      const sql_active_status = "SELECT is_active FROM post WHERE post_id =?";
-      const [res_active]: any = await pool.query(sql_active_status, [postId]);
-
-      var active_status = res_active[0]?.is_active;
-      var sql = "";
-      if (active_status == 1) {
-        sql = `
-        UPDATE post
-        SET is_active = null
-        WHERE post_id = ?
-      `;
-      } else {
-        sql = `
-        UPDATE post
-        SET is_active = 1
-        WHERE post_id = ?
-      `;
-      }
-
-      const [result]: any = await pool.query(sql, [postId]);
-      console.log(result);
-
-      if (result.affectedRows === 0) {
-        return {
-          status: 404,
-          success: false,
-          message: "Post not found",
-        };
-      }
-
-      return {
-        status: 200,
-        success: true,
-        message: "Post updated to active successfully",
-      };
-    } catch (err) {
-      console.log(err);
-      return {
-        status: 500,
-        success: false,
-        message: "Internal server error",
-      };
+      
+      return createSuccessResponse(200, "Active posts retrieved successfully", rows);
+    } catch (error) {
+      console.error("Error getting active posts:", error);
+      return createErrorResponse(500, "Internal server error");
     }
   },
+
+  // อัปเดตสถานะพสต์
+  updateStatusActive: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const postId = parseInt(ctx.params.id);
+      
+      if (isNaN(postId)) {
+        return createErrorResponse(400, "Invalid post ID");
+      }
+
+      const [currentStatus]: any = await pool.query(
+        "SELECT is_active FROM post WHERE post_id = ?",
+        [postId]
+      );
+
+      if (!currentStatus || currentStatus.length === 0) {
+        return createErrorResponse(404, "Post not found");
+      }
+
+      const isActive = currentStatus[0]?.is_active;
+      const newStatus = isActive === 1 ? null : 1;
+
+      const [result]: any = await pool.query(
+        `UPDATE post SET is_active = ? WHERE post_id = ?`,
+        [newStatus, postId]
+      );
+
+      if (result.affectedRows === 0) {
+        return createErrorResponse(404, "Post not found");
+      }
+
+      const message = newStatus === 1 
+        ? "Post activated successfully" 
+        : "Post deactivated successfully";
+
+      return createSuccessResponse(200, message);
+    } catch (error) {
+      console.error("Error updating post status:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  }
 };
