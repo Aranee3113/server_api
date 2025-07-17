@@ -10,4 +10,5 @@ export const user_route = (app: Elysia) =>
         .get("/:id", user_controller.getUserById) // GET /user/:id
         .put("/:id", user_controller.updateUserById) // PUT /user/:id
         .delete("/:id", user_controller.deleteUserById) // DELETE /user/:id
+        .post("", user_controller.addUser)
   );
