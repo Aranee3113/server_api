@@ -353,7 +353,7 @@ export const post_controller = {
     }
   },
 
-  // อัปเดตสถานะพสต์
+  // อัปเดตสถานะโพสต์
   updateStatusActive: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
