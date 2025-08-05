@@ -94,61 +94,7 @@ const deleteImageFile = async (imagePath: string): Promise<void> => {
 };
 
 export const post_controller = {
-  /*getPostWithComments: async (ctx: any): Promise<ApiResponse> => {
-    try {
-      const postId = parseInt(ctx.params.id);
-
-      // 1. ดึงข้อมูลโพสต์
-      const [postRows]: any = await pool.query(
-        `
-      SELECT 
-        p.post_id,
-        p.post_name,
-        p.post_description,
-        p.post_timestamp,
-        p.is_active,
-        u.user_id,
-        u.user_name
-      FROM post p
-      JOIN user u ON u.user_id = p.user_id
-      WHERE p.post_id = ?
-    `,
-        [postId]
-      );
-
-      if (!postRows || postRows.length === 0) {
-        return createSuccessResponse(204, "Post not found", null);
-      }
-
-      const post = postRows[0];
-
-      // 2. ดึงคอมเมนต์ของโพสต์นั้นที่ active
-      const [commentRows]: any = await pool.query(
-        `
-      SELECT 
-        c.comment_id,
-        c.comment_text,
-        c.comment_image_path,
-        c.comment_timestamp,
-        u.user_id,
-        u.user_name
-      FROM comment c
-      JOIN user u ON u.user_id = c.user_id
-      WHERE c.post_id = ? AND c.is_active = 1
-      ORDER BY c.comment_timestamp DESC
-    `,
-        [postId]
-      );
-
-      // 3. รวมข้อมูลเป็น response
-      post.comments = commentRows || [];
-
-      return createSuccessResponse(200, "Post with comments loaded", post);
-    } catch (error) {
-      console.error("Error loading post with comments:", error);
-      return createErrorResponse(500, "Internal server error");
-    }
-  },*/
+  
   // สร้างโพสต์
   createpost: async (ctx: any): Promise<ApiResponse> => {
     try {
@@ -255,6 +201,7 @@ export const post_controller = {
         ) AS comments
 
       FROM post p
+      WHERE p.is_active = 1
       ORDER BY p.post_timestamp DESC
     `;
 
