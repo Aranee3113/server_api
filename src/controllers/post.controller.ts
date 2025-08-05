@@ -54,75 +54,42 @@ const createSuccessResponse = (
   ...(data && { data }),
 });
 
-const saveImageFile = async (file: any, postId: number): Promise<void> => {
-  console.log("Processing file:", {
-    name: file?.name,
-    size: file?.size,
-    type: file?.type,
-  });
-
-  if (!file || !file.name || !file.size) {
-    console.log("Skipping invalid file");
-    return;
-  }
-
-  try {
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const filename = generateUniqueFilename(file.name);
-    const filepath = path.join(process.cwd(), "public", "uploads", filename);
-
-    console.log("Saving file to:", filepath);
-    await writeFile(filepath, buffer);
-    var filename_insert = "/uploads/" + filename;
-
-    console.log("Inserting to database:", { postId, filename });
-    const [result]: any = await pool.query(
-      `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
-      [postId, filename_insert]
-    );
-
-    console.log("Database insert result:", result);
-  } catch (error) {
-    console.error("Error saving image file:", error);
-    throw error;
-  }
+const saveImageFile = async (file: any, postId: number): Promise<{ post_image_id: number, post_image_path: string } | null> => {
+  if (!file || !file.name || !file.size) return null;
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const filename = generateUniqueFilename(file.name);
+  const filepath = path.join(process.cwd(), "public", "uploads", filename);
+  await writeFile(filepath, buffer);
+  const filename_insert = "/uploads/" + filename;
+  const [result]: any = await pool.query(
+    `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
+    [postId, filename_insert]
+  );
+  return {
+    post_image_id: result.insertId,
+    post_image_path: filename_insert,
+  };
 };
 
 const deleteImageFile = async (imagePath: string): Promise<void> => {
-  const filepath = path.join(process.cwd(), "public", "uploads", imagePath);
+  const filepath = path.join(process.cwd(), "public", imagePath);
   await unlink(filepath).catch(() => {});
 };
 
 export const post_controller = {
-  
-  // สร้างโพสต์
   createpost: async (ctx: any): Promise<ApiResponse> => {
     try {
       const formData = await ctx.request.formData();
       const post_name = formData.get("post_name")?.toString();
       const post_description = formData.get("post_description")?.toString();
-      const user_id = formData.get("user_id")?.toString();
-      const post_timestamp_input = formData.get("post_timestamp")?.toString();
-      const files = formData.getAll("post_images");
-
-      console.log("FormData received:", {
-        post_name,
-        post_description,
-        user_id,
-        post_timestamp_input,
-        filesCount: files.length,
-        files: files.map((f) => ({
-          name: f?.name,
-          size: f?.size,
-          type: f?.type,
-        })),
-      });
+      const user_id = parseInt(formData.get("user_id")?.toString() || "");
+      const images = formData.getAll("post_images");
 
       if (!post_name || !post_description || !user_id) {
         return createErrorResponse(400, "Missing required fields");
       }
 
-      const post_timestamp = formatTimestamp(post_timestamp_input);
+      const post_timestamp = formatTimestamp();
 
       const [result]: any = await pool.query(
         `INSERT INTO post (post_name, post_description, post_timestamp, user_id)
@@ -131,21 +98,11 @@ export const post_controller = {
       );
 
       const postId = result.insertId;
-      console.log("Post created with ID:", postId);
-
-      const savedImages = [];
-      for (const file of files) {
-        try {
-          await saveImageFile(file, postId);
-          if (file && file.name) {
-            savedImages.push(file.name);
-          }
-        } catch (imageError) {
-          console.error("Failed to save image:", file?.name, imageError);
-        }
+      const imageData = [];
+      for (const file of images) {
+        const image = await saveImageFile(file, postId);
+        if (image) imageData.push(image);
       }
-
-      console.log("Images saved:", savedImages);
 
       return createSuccessResponse(201, "Post created successfully", {
         post_id: postId,
@@ -153,7 +110,7 @@ export const post_controller = {
         post_description,
         post_timestamp,
         user_id,
-        images_saved: savedImages.length,
+        images: imageData,
       });
     } catch (error) {
       console.error("Error creating post:", error);
@@ -161,49 +118,45 @@ export const post_controller = {
     }
   },
 
-  // แสดงโพสต์
   getAllposts: async (ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
-      SELECT 
-        p.post_id, 
-        p.post_name, 
-        p.post_description, 
-        p.post_timestamp, 
-        p.user_id, 
-        p.is_active,
-
-        (
-          SELECT JSON_ARRAYAGG(
-            JSON_OBJECT(
-              'post_image_id', i.post_image_id,
-              'post_image_path', i.post_image_path
+        SELECT 
+          p.post_id, 
+          p.post_name, 
+          p.post_description, 
+          p.post_timestamp, 
+          p.user_id, 
+          p.is_active,
+          (
+            SELECT JSON_ARRAYAGG(
+              JSON_OBJECT(
+                'post_image_id', i.post_image_id,
+                'post_image_path', i.post_image_path
+              )
             )
-          )
-          FROM post_image i
-          WHERE i.post_id = p.post_id
-        ) AS images,
-
-        (
-          SELECT JSON_ARRAYAGG(
-            JSON_OBJECT(
-              'comment_id', c.comment_id,
-              'comment_text', c.comment_text,
-              'comment_image_path', c.comment_image_path,
-              'comment_timestamp', c.comment_timestamp,
-              'user_id', u.user_id,
-              'user_name', u.user_name
+            FROM post_image i
+            WHERE i.post_id = p.post_id
+          ) AS images,
+          (
+            SELECT JSON_ARRAYAGG(
+              JSON_OBJECT(
+                'comment_id', c.comment_id,
+                'comment_text', c.comment_text,
+                'comment_image_path', c.comment_image_path,
+                'comment_timestamp', c.comment_timestamp,
+                'user_id', u.user_id,
+                'user_name', u.user_name
+              )
             )
-          )
-          FROM comment c
-          JOIN user u ON u.user_id = c.user_id
-          WHERE c.post_id = p.post_id AND c.is_active = 1
-        ) AS comments
-
-      FROM post p
-      WHERE p.is_active = 1
-      ORDER BY p.post_timestamp DESC
-    `;
+            FROM comment c
+            JOIN user u ON u.user_id = c.user_id
+            WHERE c.post_id = p.post_id AND c.is_active = 1
+          ) AS comments
+        FROM post p
+        WHERE p.is_active = 1
+        ORDER BY p.post_timestamp DESC
+      `;
 
       const [rows]: any = await pool.query(sql);
 
@@ -211,18 +164,13 @@ export const post_controller = {
         return createSuccessResponse(204, "No posts found", []);
       }
 
-      return createSuccessResponse(
-        200,
-        "Posts with comments retrieved successfully",
-        rows
-      );
+      return createSuccessResponse(200, "Posts with comments retrieved successfully", rows);
     } catch (error) {
       console.error("Error getting all posts with comments:", error);
       return createErrorResponse(500, "Internal server error");
     }
   },
 
-  // แสดงโพสต์โดยใช้ ID
   getpostById: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
@@ -266,14 +214,10 @@ export const post_controller = {
     }
   },
 
-  // แก้ไขโพสต์ตาม id
   updatepostById: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
-
-      if (isNaN(postId)) {
-        return createErrorResponse(400, "Invalid post ID");
-      }
+      if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
 
       const formData = await ctx.request.formData();
       const post_name = formData.get("post_name")?.toString();
@@ -281,9 +225,7 @@ export const post_controller = {
       const user_id = formData.get("user_id")?.toString();
       const post_timestamp_input = formData.get("post_timestamp")?.toString();
       const files = formData.getAll("post_images");
-      const keepImageIds = formData
-        .getAll("keep_image_ids")
-        .map((id) => parseInt(id.toString()));
+      const keepImageIds = formData.getAll("keep_image_ids").map(id => parseInt(id.toString()));
 
       if (!post_name || !post_description || !user_id) {
         return createErrorResponse(400, "Missing required fields");
@@ -292,8 +234,7 @@ export const post_controller = {
       const post_timestamp = formatTimestamp(post_timestamp_input);
 
       await pool.query(
-        `UPDATE post SET post_name = ?, post_description = ?, post_timestamp = ?, user_id = ? 
-         WHERE post_id = ?`,
+        `UPDATE post SET post_name = ?, post_description = ?, post_timestamp = ?, user_id = ? WHERE post_id = ?`,
         [post_name, post_description, post_timestamp, user_id, postId]
       );
 
@@ -306,16 +247,11 @@ export const post_controller = {
         .filter((img: any) => !keepImageIds.includes(img.post_image_id))
         .map(async (img: any) => {
           await deleteImageFile(img.post_image_path);
-          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [
-            img.post_image_id,
-          ]);
+          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [img.post_image_id]);
         });
-
       await Promise.all(deletePromises);
 
-      const saveImagePromises = files.map((file: any) =>
-        saveImageFile(file, postId)
-      );
+      const saveImagePromises = files.map((file: any) => saveImageFile(file, postId));
       await Promise.all(saveImagePromises);
 
       return createSuccessResponse(200, "Post updated successfully");
@@ -325,35 +261,23 @@ export const post_controller = {
     }
   },
 
-  // ลบโพสต์
   deletepostById: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
-
-      if (isNaN(postId)) {
-        return createErrorResponse(400, "Invalid post ID");
-      }
+      if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
 
       const [images]: any = await pool.query(
         `SELECT post_image_path FROM post_image WHERE post_id = ?`,
         [postId]
       );
 
-      const deleteFilePromises = images.map((image: any) =>
-        deleteImageFile(image.post_image_path)
-      );
+      const deleteFilePromises = images.map((image: any) => deleteImageFile(image.post_image_path));
       await Promise.all(deleteFilePromises);
 
-      // Delete from database
       await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [postId]);
-      const [result]: any = await pool.query(
-        `DELETE FROM post WHERE post_id = ?`,
-        [postId]
-      );
+      const [result]: any = await pool.query(`DELETE FROM post WHERE post_id = ?`, [postId]);
 
-      if (result.affectedRows === 0) {
-        return createErrorResponse(404, "Post not found");
-      }
+      if (result.affectedRows === 0) return createErrorResponse(404, "Post not found");
 
       return createSuccessResponse(200, "Post deleted successfully");
     } catch (error) {
@@ -362,7 +286,6 @@ export const post_controller = {
     }
   },
 
-  // แสดงโพสต์ที่อนุมัติ
   getPostIsActive: async (ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
@@ -382,57 +305,30 @@ export const post_controller = {
       `;
 
       const [rows]: any = await pool.query(sql);
+      if (!rows || rows.length === 0) return createSuccessResponse(204, "No active posts found", []);
 
-      if (!rows || rows.length === 0) {
-        return createSuccessResponse(204, "No active posts found", []);
-      }
-
-      return createSuccessResponse(
-        200,
-        "Active posts retrieved successfully",
-        rows
-      );
+      return createSuccessResponse(200, "Active posts retrieved successfully", rows);
     } catch (error) {
       console.error("Error getting active posts:", error);
       return createErrorResponse(500, "Internal server error");
     }
   },
 
-  // อัปเดตสถานะโพสต์
   updateStatusActive: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
+      if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
 
-      if (isNaN(postId)) {
-        return createErrorResponse(400, "Invalid post ID");
-      }
-
-      const [currentStatus]: any = await pool.query(
-        "SELECT is_active FROM post WHERE post_id = ?",
-        [postId]
-      );
-
-      if (!currentStatus || currentStatus.length === 0) {
-        return createErrorResponse(404, "Post not found");
-      }
+      const [currentStatus]: any = await pool.query("SELECT is_active FROM post WHERE post_id = ?", [postId]);
+      if (!currentStatus || currentStatus.length === 0) return createErrorResponse(404, "Post not found");
 
       const isActive = currentStatus[0]?.is_active;
       const newStatus = isActive === 1 ? null : 1;
 
-      const [result]: any = await pool.query(
-        `UPDATE post SET is_active = ? WHERE post_id = ?`,
-        [newStatus, postId]
-      );
+      const [result]: any = await pool.query(`UPDATE post SET is_active = ? WHERE post_id = ?`, [newStatus, postId]);
+      if (result.affectedRows === 0) return createErrorResponse(404, "Post not found");
 
-      if (result.affectedRows === 0) {
-        return createErrorResponse(404, "Post not found");
-      }
-
-      const message =
-        newStatus === 1
-          ? "Post activated successfully"
-          : "Post deactivated successfully";
-
+      const message = newStatus === 1 ? "Post activated successfully" : "Post deactivated successfully";
       return createSuccessResponse(200, message);
     } catch (error) {
       console.error("Error updating post status:", error);
