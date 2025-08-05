@@ -42,13 +42,14 @@ const saveCommentImage = async (file: any): Promise<string | null> => {
   await mkdir(uploadDir, { recursive: true });
   const filepath = path.join(uploadDir, filename);
   await writeFile(filepath, buffer);
-  return filename;
+  var filename_insert='/uploads/'+filename
+  return filename_insert;
 };
 
 const deleteCommentImage = async (imagePath: string): Promise<void> => {
   if (!imagePath) return;
   const filepath = path.join(process.cwd(), "public", "uploads", imagePath);
-  await unlink(filepath).catch(() => {}); // ignore error if file doesn't exist
+  await unlink(filepath).catch(() => {}); 
 };
 
 export const comment_controller = {
