@@ -92,65 +92,35 @@ const deleteImageFile = async (imagePath: string): Promise<void> => {
 export const post_controller = {
 // สร้างโพสต์
   createpost: async (ctx: any): Promise<ApiResponse> => {
-    try {
-      const formData = await ctx.request.formData();
-      const post_name = formData.get("post_name")?.toString();
-      const post_description = formData.get("post_description")?.toString();
-      const user_id = formData.get("user_id")?.toString();
-      const post_timestamp_input = formData.get("post_timestamp")?.toString();
-      const files = formData.getAll("post_images");
+  try {
+    const { post_name, post_description, user_id } = await ctx.body;
 
-      console.log('FormData received:', {
-        post_name,
-        post_description,
-        user_id,
-        post_timestamp_input,
-        filesCount: files.length,
-        files: files.map(f => ({ name: f?.name, size: f?.size, type: f?.type }))
-      });
-
-      if (!post_name || !post_description || !user_id) {
-        return createErrorResponse(400, "Missing required fields");
-      }
-
-      const post_timestamp = formatTimestamp(post_timestamp_input);
-
-      const [result]: any = await pool.query(
-        `INSERT INTO post (post_name, post_description, post_timestamp, user_id)
-         VALUES (?, ?, ?, ?)`,
-        [post_name, post_description, post_timestamp, user_id]
-      );
-
-      const postId = result.insertId;
-      console.log('Post created with ID:', postId);
-
-      const savedImages = [];
-      for (const file of files) {
-        try {
-          await saveImageFile(file, postId);
-          if (file && file.name) {
-            savedImages.push(file.name);
-          }
-        } catch (imageError) {
-          console.error('Failed to save image:', file?.name, imageError);
-        }
-      }
-
-      console.log('Images saved:', savedImages);
-
-      return createSuccessResponse(201, "Post created successfully", {
-        post_id: postId,
-        post_name,
-        post_description,
-        post_timestamp,
-        user_id,
-        images_saved: savedImages.length
-      });
-    } catch (error) {
-      console.error("Error creating post:", error);
-      return createErrorResponse(500, "Internal server error");
+    if (!post_name || !post_description || !user_id) {
+      return createErrorResponse(400, "Missing required fields");
     }
-  },
+
+    const post_timestamp = formatTimestamp();
+
+    const [result]: any = await pool.query(
+      `INSERT INTO post (post_name, post_description, post_timestamp, user_id)
+       VALUES (?, ?, ?, ?)`,
+      [post_name, post_description, post_timestamp, user_id]
+    );
+
+    const postId = result.insertId;
+
+    return createSuccessResponse(201, "Post created successfully", {
+      post_id: postId,
+      post_name,
+      post_description,
+      post_timestamp,
+      user_id,
+    });
+  } catch (error) {
+    console.error("Error creating post:", error);
+    return createErrorResponse(500, "Internal server error");
+  }
+},
 
 // แสดงโพสต์
   getAllposts: async (ctx: any): Promise<ApiResponse> => {
