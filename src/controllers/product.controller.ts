@@ -16,9 +16,10 @@ const saveImageFile = async (file: any, productId: number): Promise<void> => {
   const filename = generateUniqueFilename(file.name);
   const filepath = path.join(process.cwd(), "public", "uploads", filename);
   await writeFile(filepath, buffer);
+  var filename_insert='/uploads/'+filename
   await pool.query(
     `INSERT INTO textile_image (textile_id, textile_image_path) VALUES (?, ?)`,
-    [productId, filename]
+    [productId, filename_insert]
   );
 };
 
@@ -28,7 +29,7 @@ const deleteImageFile = async (imagePath: string): Promise<void> => {
 };
 
 export const product_controller = {
-  // ✅ เพิ่มสินค้า
+  //เพิ่มสินค้า
   createProduct: async (ctx: any) => {
     try {
       const formData = await ctx.request.formData();
@@ -62,11 +63,11 @@ export const product_controller = {
     }
   },
 
-  // ✅ แสดงสินค้าทั้งหมด
+  //แสดงสินค้าทั้งหมด
   getAllProducts: async (ctx: any) => {
     try {
       const sql = `
-        SELECT t.*, (
+         SELECT t.*, (
           SELECT JSON_ARRAYAGG(JSON_OBJECT('textile_image_id', i.textile_image_id, 'textile_image_path', i.textile_image_path))
           FROM textile_image i WHERE i.textile_id = t.textile_id
         ) AS images
@@ -83,7 +84,7 @@ export const product_controller = {
     }
   },
 
-  // ✅ แสดงสินค้าตาม ID
+  //แสดงสินค้าตาม ID
   getProductById: async (ctx: any) => {
     try {
       const textileId = ctx.params.id;
@@ -105,7 +106,7 @@ export const product_controller = {
     }
   },
 
-  // ✅ แก้ไขสินค้า + รูปภาพ
+  //แก้ไขสินค้า + รูปภาพ
   updateProductById: async (ctx: any) => {
     try {
       const textileId = parseInt(ctx.params.id);

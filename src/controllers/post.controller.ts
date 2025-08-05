@@ -73,11 +73,12 @@ const saveImageFile = async (file: any, postId: number): Promise<void> => {
 
     console.log("Saving file to:", filepath);
     await writeFile(filepath, buffer);
+    var filename_insert = "/uploads/" + filename;
 
     console.log("Inserting to database:", { postId, filename });
     const [result]: any = await pool.query(
       `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
-      [postId, filename]
+      [postId, filename_insert]
     );
 
     console.log("Database insert result:", result);
@@ -93,7 +94,7 @@ const deleteImageFile = async (imagePath: string): Promise<void> => {
 };
 
 export const post_controller = {
-  getPostWithComments: async (ctx: any): Promise<ApiResponse> => {
+  /*getPostWithComments: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
 
@@ -147,7 +148,7 @@ export const post_controller = {
       console.error("Error loading post with comments:", error);
       return createErrorResponse(500, "Internal server error");
     }
-  },
+  },*/
   // สร้างโพสต์
   createpost: async (ctx: any): Promise<ApiResponse> => {
     try {
@@ -218,26 +219,44 @@ export const post_controller = {
   getAllposts: async (ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
-        SELECT 
-          p.post_id, 
-          p.post_name, 
-          p.post_description, 
-          p.post_timestamp, 
-          p.user_id, 
-          p.is_active,
-          (
-            SELECT JSON_ARRAYAGG(
-              JSON_OBJECT(
-                'post_image_id', i.post_image_id,
-                'post_image_path', i.post_image_path
-              )
+      SELECT 
+        p.post_id, 
+        p.post_name, 
+        p.post_description, 
+        p.post_timestamp, 
+        p.user_id, 
+        p.is_active,
+
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'post_image_id', i.post_image_id,
+              'post_image_path', i.post_image_path
             )
-            FROM post_image i
-            WHERE i.post_id = p.post_id
-          ) AS images
-        FROM post p
-        ORDER BY p.post_timestamp DESC
-      `;
+          )
+          FROM post_image i
+          WHERE i.post_id = p.post_id
+        ) AS images,
+
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'comment_id', c.comment_id,
+              'comment_text', c.comment_text,
+              'comment_image_path', c.comment_image_path,
+              'comment_timestamp', c.comment_timestamp,
+              'user_id', u.user_id,
+              'user_name', u.user_name
+            )
+          )
+          FROM comment c
+          JOIN user u ON u.user_id = c.user_id
+          WHERE c.post_id = p.post_id AND c.is_active = 1
+        ) AS comments
+
+      FROM post p
+      ORDER BY p.post_timestamp DESC
+    `;
 
       const [rows]: any = await pool.query(sql);
 
@@ -245,9 +264,13 @@ export const post_controller = {
         return createSuccessResponse(204, "No posts found", []);
       }
 
-      return createSuccessResponse(200, "Posts retrieved successfully", rows);
+      return createSuccessResponse(
+        200,
+        "Posts with comments retrieved successfully",
+        rows
+      );
     } catch (error) {
-      console.error("Error getting all posts:", error);
+      console.error("Error getting all posts with comments:", error);
       return createErrorResponse(500, "Internal server error");
     }
   },
