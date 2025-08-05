@@ -32,7 +32,7 @@ const generateUniqueFilename = (originalName: string): string => {
 };
 
 const formatTimestamp = (timestamp?: string): string => {
-  return timestamp 
+  return timestamp
     ? format(new Date(timestamp), "yyyy-MM-dd HH:mm:ss")
     : format(new Date(), "yyyy-MM-dd HH:mm:ss");
 };
@@ -40,57 +40,115 @@ const formatTimestamp = (timestamp?: string): string => {
 const createErrorResponse = (status: number, message: string): ApiResponse => ({
   status,
   success: false,
-  message
+  message,
 });
 
-const createSuccessResponse = (status: number, message: string, data?: any): ApiResponse => ({
+const createSuccessResponse = (
+  status: number,
+  message: string,
+  data?: any
+): ApiResponse => ({
   status,
   success: true,
   message,
-  ...(data && { data })
+  ...(data && { data }),
 });
 
 const saveImageFile = async (file: any, postId: number): Promise<void> => {
-  console.log('Processing file:', {
+  console.log("Processing file:", {
     name: file?.name,
     size: file?.size,
-    type: file?.type
+    type: file?.type,
   });
-  
+
   if (!file || !file.name || !file.size) {
-    console.log('Skipping invalid file');
+    console.log("Skipping invalid file");
     return;
   }
-  
+
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
     const filename = generateUniqueFilename(file.name);
     const filepath = path.join(process.cwd(), "public", "uploads", filename);
-    
-    console.log('Saving file to:', filepath);
+
+    console.log("Saving file to:", filepath);
     await writeFile(filepath, buffer);
-    
-    console.log('Inserting to database:', { postId, filename });
+
+    console.log("Inserting to database:", { postId, filename });
     const [result]: any = await pool.query(
       `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
       [postId, filename]
     );
-    
-    console.log('Database insert result:', result);
+
+    console.log("Database insert result:", result);
   } catch (error) {
-    console.error('Error saving image file:', error);
-    throw error; 
+    console.error("Error saving image file:", error);
+    throw error;
   }
 };
 
 const deleteImageFile = async (imagePath: string): Promise<void> => {
   const filepath = path.join(process.cwd(), "public", "uploads", imagePath);
-  await unlink(filepath).catch(() => {
-  });
+  await unlink(filepath).catch(() => {});
 };
 
 export const post_controller = {
-// สร้างโพสต์
+  getPostWithComments: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const postId = parseInt(ctx.params.id);
+
+      // 1. ดึงข้อมูลโพสต์
+      const [postRows]: any = await pool.query(
+        `
+      SELECT 
+        p.post_id,
+        p.post_name,
+        p.post_description,
+        p.post_timestamp,
+        p.is_active,
+        u.user_id,
+        u.user_name
+      FROM post p
+      JOIN user u ON u.user_id = p.user_id
+      WHERE p.post_id = ?
+    `,
+        [postId]
+      );
+
+      if (!postRows || postRows.length === 0) {
+        return createSuccessResponse(204, "Post not found", null);
+      }
+
+      const post = postRows[0];
+
+      // 2. ดึงคอมเมนต์ของโพสต์นั้นที่ active
+      const [commentRows]: any = await pool.query(
+        `
+      SELECT 
+        c.comment_id,
+        c.comment_text,
+        c.comment_image_path,
+        c.comment_timestamp,
+        u.user_id,
+        u.user_name
+      FROM comment c
+      JOIN user u ON u.user_id = c.user_id
+      WHERE c.post_id = ? AND c.is_active = 1
+      ORDER BY c.comment_timestamp DESC
+    `,
+        [postId]
+      );
+
+      // 3. รวมข้อมูลเป็น response
+      post.comments = commentRows || [];
+
+      return createSuccessResponse(200, "Post with comments loaded", post);
+    } catch (error) {
+      console.error("Error loading post with comments:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+  // สร้างโพสต์
   createpost: async (ctx: any): Promise<ApiResponse> => {
     try {
       const formData = await ctx.request.formData();
@@ -100,13 +158,17 @@ export const post_controller = {
       const post_timestamp_input = formData.get("post_timestamp")?.toString();
       const files = formData.getAll("post_images");
 
-      console.log('FormData received:', {
+      console.log("FormData received:", {
         post_name,
         post_description,
         user_id,
         post_timestamp_input,
         filesCount: files.length,
-        files: files.map(f => ({ name: f?.name, size: f?.size, type: f?.type }))
+        files: files.map((f) => ({
+          name: f?.name,
+          size: f?.size,
+          type: f?.type,
+        })),
       });
 
       if (!post_name || !post_description || !user_id) {
@@ -122,7 +184,7 @@ export const post_controller = {
       );
 
       const postId = result.insertId;
-      console.log('Post created with ID:', postId);
+      console.log("Post created with ID:", postId);
 
       const savedImages = [];
       for (const file of files) {
@@ -132,11 +194,11 @@ export const post_controller = {
             savedImages.push(file.name);
           }
         } catch (imageError) {
-          console.error('Failed to save image:', file?.name, imageError);
+          console.error("Failed to save image:", file?.name, imageError);
         }
       }
 
-      console.log('Images saved:', savedImages);
+      console.log("Images saved:", savedImages);
 
       return createSuccessResponse(201, "Post created successfully", {
         post_id: postId,
@@ -144,7 +206,7 @@ export const post_controller = {
         post_description,
         post_timestamp,
         user_id,
-        images_saved: savedImages.length
+        images_saved: savedImages.length,
       });
     } catch (error) {
       console.error("Error creating post:", error);
@@ -152,7 +214,7 @@ export const post_controller = {
     }
   },
 
-// แสดงโพสต์
+  // แสดงโพสต์
   getAllposts: async (ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
@@ -176,13 +238,13 @@ export const post_controller = {
         FROM post p
         ORDER BY p.post_timestamp DESC
       `;
-      
+
       const [rows]: any = await pool.query(sql);
-      
+
       if (!rows || rows.length === 0) {
         return createSuccessResponse(204, "No posts found", []);
       }
-      
+
       return createSuccessResponse(200, "Posts retrieved successfully", rows);
     } catch (error) {
       console.error("Error getting all posts:", error);
@@ -190,11 +252,11 @@ export const post_controller = {
     }
   },
 
-// แสดงโพสต์โดยใช้ ID
+  // แสดงโพสต์โดยใช้ ID
   getpostById: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
-      
+
       if (isNaN(postId)) {
         return createErrorResponse(400, "Invalid post ID");
       }
@@ -220,13 +282,13 @@ export const post_controller = {
         FROM post p
         WHERE p.post_id = ?
       `;
-      
+
       const [rows]: any = await pool.query(sql, [postId]);
-      
+
       if (!rows || rows.length === 0) {
         return createErrorResponse(404, "Post not found");
       }
-      
+
       return createSuccessResponse(200, "Post retrieved successfully", rows[0]);
     } catch (error) {
       console.error("Error getting post by ID:", error);
@@ -238,7 +300,7 @@ export const post_controller = {
   updatepostById: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
-      
+
       if (isNaN(postId)) {
         return createErrorResponse(400, "Invalid post ID");
       }
@@ -249,7 +311,9 @@ export const post_controller = {
       const user_id = formData.get("user_id")?.toString();
       const post_timestamp_input = formData.get("post_timestamp")?.toString();
       const files = formData.getAll("post_images");
-      const keepImageIds = formData.getAll("keep_image_ids").map(id => parseInt(id.toString()));
+      const keepImageIds = formData
+        .getAll("keep_image_ids")
+        .map((id) => parseInt(id.toString()));
 
       if (!post_name || !post_description || !user_id) {
         return createErrorResponse(400, "Missing required fields");
@@ -272,12 +336,16 @@ export const post_controller = {
         .filter((img: any) => !keepImageIds.includes(img.post_image_id))
         .map(async (img: any) => {
           await deleteImageFile(img.post_image_path);
-          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [img.post_image_id]);
+          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [
+            img.post_image_id,
+          ]);
         });
 
       await Promise.all(deletePromises);
 
-      const saveImagePromises = files.map((file: any) => saveImageFile(file, postId));
+      const saveImagePromises = files.map((file: any) =>
+        saveImageFile(file, postId)
+      );
       await Promise.all(saveImagePromises);
 
       return createSuccessResponse(200, "Post updated successfully");
@@ -291,7 +359,7 @@ export const post_controller = {
   deletepostById: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
-      
+
       if (isNaN(postId)) {
         return createErrorResponse(400, "Invalid post ID");
       }
@@ -301,14 +369,17 @@ export const post_controller = {
         [postId]
       );
 
-      const deleteFilePromises = images.map((image: any) => 
+      const deleteFilePromises = images.map((image: any) =>
         deleteImageFile(image.post_image_path)
       );
       await Promise.all(deleteFilePromises);
 
       // Delete from database
       await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [postId]);
-      const [result]: any = await pool.query(`DELETE FROM post WHERE post_id = ?`, [postId]);
+      const [result]: any = await pool.query(
+        `DELETE FROM post WHERE post_id = ?`,
+        [postId]
+      );
 
       if (result.affectedRows === 0) {
         return createErrorResponse(404, "Post not found");
@@ -339,25 +410,29 @@ export const post_controller = {
         WHERE post.is_active = 1
         ORDER BY post.post_timestamp DESC
       `;
-      
+
       const [rows]: any = await pool.query(sql);
-      
+
       if (!rows || rows.length === 0) {
         return createSuccessResponse(204, "No active posts found", []);
       }
-      
-      return createSuccessResponse(200, "Active posts retrieved successfully", rows);
+
+      return createSuccessResponse(
+        200,
+        "Active posts retrieved successfully",
+        rows
+      );
     } catch (error) {
       console.error("Error getting active posts:", error);
       return createErrorResponse(500, "Internal server error");
     }
   },
 
-  // อัปเดตสถานะพสต์
+  // อัปเดตสถานะโพสต์
   updateStatusActive: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = parseInt(ctx.params.id);
-      
+
       if (isNaN(postId)) {
         return createErrorResponse(400, "Invalid post ID");
       }
@@ -383,14 +458,15 @@ export const post_controller = {
         return createErrorResponse(404, "Post not found");
       }
 
-      const message = newStatus === 1 
-        ? "Post activated successfully" 
-        : "Post deactivated successfully";
+      const message =
+        newStatus === 1
+          ? "Post activated successfully"
+          : "Post deactivated successfully";
 
       return createSuccessResponse(200, message);
     } catch (error) {
       console.error("Error updating post status:", error);
       return createErrorResponse(500, "Internal server error");
     }
-  }
+  },
 };

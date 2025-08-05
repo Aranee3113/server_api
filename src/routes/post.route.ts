@@ -9,3 +9,4 @@ export const postRoutes = new Elysia({ prefix: "/post" })
   .delete("/:id", post_controller.deletepostById)      // DELETE /post/:id
   .get("/active", post_controller.getPostIsActive)        // GET /post is active
   .put("/active/:id", post_controller.updateStatusActive)
+  .get("/:id/full", post_controller.getPostWithComments) // GET /post/:id/full
