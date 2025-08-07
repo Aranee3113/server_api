@@ -38,17 +38,17 @@ const saveCommentImage = async (file: any): Promise<string | null> => {
   if (!file || !file.name || !file.size) return null;
   const buffer = Buffer.from(await file.arrayBuffer());
   const filename = generateUniqueFilename(file.name);
-  const uploadDir = path.join(process.cwd(), "public", "uploads");
+  const uploadDir = path.join(process.cwd(), "public", "uploads", "comment");
   await mkdir(uploadDir, { recursive: true });
   const filepath = path.join(uploadDir, filename);
   await writeFile(filepath, buffer);
-  var filename_insert='/uploads/'+filename
+  var filename_insert='/uploads/comment/' + filename
   return filename_insert;
 };
 
 const deleteCommentImage = async (imagePath: string): Promise<void> => {
   if (!imagePath) return;
-  const filepath = path.join(process.cwd(), "public", "uploads", imagePath);
+  const filepath = path.join(process.cwd(), "public", "uploads","comment", imagePath);
   await unlink(filepath).catch(() => {}); 
 };
 
