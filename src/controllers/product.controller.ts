@@ -108,7 +108,7 @@ export const product_controller = {
     }
   },
 
-  //แก้ไขสินค้า + รูปภาพ
+  //แก้ไขสินค้า
   updateProductById: async (ctx: any) => {
     try {
       const textileId = parseInt(ctx.params.id);
