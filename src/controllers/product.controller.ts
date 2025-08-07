@@ -14,9 +14,11 @@ const saveImageFile = async (file: any, productId: number): Promise<void> => {
   if (!file || !file.name || !file.size) return;
   const buffer = Buffer.from(await file.arrayBuffer());
   const filename = generateUniqueFilename(file.name);
-  const filepath = path.join(process.cwd(), "public", "uploads", filename);
+  const filepath = path.join(process.cwd(), "public", "uploads", "textile", filename);
   await writeFile(filepath, buffer);
-  var filename_insert='/uploads/'+filename
+
+  const filename_insert = '/uploads/textile/' + filename;
+
   await pool.query(
     `INSERT INTO textile_image (textile_id, textile_image_path) VALUES (?, ?)`,
     [productId, filename_insert]
