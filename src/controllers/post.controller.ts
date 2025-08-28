@@ -1,10 +1,9 @@
-import { status } from "elysia";
 import pool from "../utils/db";
 import { format } from "date-fns";
 import { writeFile, unlink } from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
-
+import { jwtDecode } from "jwt-decode";
 interface PostData {
   post_id?: number;
   post_name: string;
@@ -88,21 +87,29 @@ const deleteImageFile = async (imagePath: string): Promise<void> => {
 export const post_controller = {
   createpost: async (ctx: any): Promise<ApiResponse> => {
     try {
+      console.log(ctx.headers.authorization.split("Bearer ")[1]);
+      const token = ctx.headers.authorization.split("Bearer ")[1];
+
+      const  deccode_jwt  = await jwtDecode(token);
+      // console.log(user_id.userId);
+      const user_id = deccode_jwt.userId;
+      console.log(user_id);
+      
       const formData = await ctx.request.formData();
       const post_name = formData.get("post_name")?.toString().trim();
       const post_description = formData
         .get("post_description")
         ?.toString()
         .trim();
-      const user_id = Number(formData.get("user_id")?.toString() || "");
       const images = formData.getAll("post_images");
 
-      if (!post_name || !post_description || Number.isNaN(user_id)) {
+      if (!post_name || !post_description ) {
         return createErrorResponse(400, "Missing required fields");
       }
 
       const post_timestamp = formatTimestamp();
-
+      console.log(formData);
+      
       // 👇 บังคับ is_active = 0
       const [result]: any = await pool.query(
         `INSERT INTO post (post_name, post_description, post_timestamp, user_id, is_active)
