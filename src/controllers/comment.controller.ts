@@ -98,7 +98,6 @@ getAllActiveComments: async (): Promise<ApiResponse> => {
       FROM comment c
       INNER JOIN user u ON u.user_id = c.user_id
       INNER JOIN post p ON p.post_id = c.post_id
-      WHERE c.is_active = 1
       ORDER BY c.comment_timestamp DESC
     `;
 
