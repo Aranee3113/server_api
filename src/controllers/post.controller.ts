@@ -89,26 +89,39 @@ export const post_controller = {
   createpost: async (ctx: any): Promise<ApiResponse> => {
     try {
       const formData = await ctx.request.formData();
-      const post_name = formData.get("post_name")?.toString();
-      const post_description = formData.get("post_description")?.toString();
-      const user_id = parseInt(formData.get("user_id")?.toString() || "");
+      const post_name = formData.get("post_name")?.toString().trim();
+      const post_description = formData
+        .get("post_description")
+        ?.toString()
+        .trim();
+      const user_id = Number(formData.get("user_id")?.toString() || "");
       const images = formData.getAll("post_images");
 
-      if (!post_name || !post_description || !user_id) {
+      if (!post_name || !post_description || Number.isNaN(user_id)) {
         return createErrorResponse(400, "Missing required fields");
       }
 
       const post_timestamp = formatTimestamp();
 
+      // 👇 บังคับ is_active = 0
       const [result]: any = await pool.query(
-        `INSERT INTO post (post_name, post_description, post_timestamp, user_id)
-         VALUES (?, ?, ?, ?)`,
+        `INSERT INTO post (post_name, post_description, post_timestamp, user_id, is_active)
+       VALUES (?, ?, ?, ?, 0)`,
         [post_name, post_description, post_timestamp, user_id]
       );
 
       const postId = result.insertId;
-      const imageData = [];
+      const imageData: any[] = [];
+
       for (const file of images) {
+        // กันเคสที่ไม่ใช่ไฟล์จริง
+        // @ts-ignore
+        if (
+          !file ||
+          typeof file === "string" ||
+          typeof file.arrayBuffer !== "function"
+        )
+          continue;
         const image = await saveImageFile(file, postId);
         if (image) imageData.push(image);
       }
@@ -119,6 +132,7 @@ export const post_controller = {
         post_description,
         post_timestamp,
         user_id,
+        is_active: 0, // 👈 เพิ่มให้ชัดเจน
         images: imageData,
       });
     } catch (error) {
@@ -310,32 +324,32 @@ export const post_controller = {
     }
   },
 
-  getPostIsActive: async (ctx: any): Promise<ApiResponse> => {
+  getPostIsActive: async (_ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
-        SELECT
-          post.post_name, 
-          post.post_description, 
-          post.post_timestamp, 
-          user.user_id, 
-          user.user_name, 
-          user.user_username, 
-          post.post_id, 
-          post.is_active
-        FROM user
-        INNER JOIN post ON user.user_id = post.user_id
-        WHERE post.is_active = 1
-        ORDER BY post.post_timestamp DESC
-      `;
+      SELECT
+        p.post_id,
+        p.post_name, 
+        p.post_description, 
+        p.post_timestamp, 
+        u.user_id, 
+        u.user_name, 
+        u.user_username, 
+        COALESCE(p.is_active,0) AS is_active
+      FROM \`user\` u
+      INNER JOIN post p ON u.user_id = p.user_id
+      WHERE COALESCE(p.is_active,0) = 1
+      ORDER BY p.post_timestamp DESC
+    `;
 
       const [rows]: any = await pool.query(sql);
-      if (!rows || rows.length === 0)
-        return createSuccessResponse(204, "No active posts found", []);
 
       return createSuccessResponse(
         200,
-        "Active posts retrieved successfully",
-        rows
+        rows?.length
+          ? "Active posts retrieved successfully"
+          : "No active posts found",
+        rows || []
       );
     } catch (error) {
       console.error("Error getting active posts:", error);
@@ -343,44 +357,34 @@ export const post_controller = {
     }
   },
 
-  // แทนที่ฟังก์ชันเดิมใน post_controller
   updateStatusActive: async (ctx: any): Promise<ApiResponse> => {
     try {
       const postId = Number(ctx.params.id);
-      if (isNaN(postId)) {
+      if (Number.isNaN(postId)) {
         return createErrorResponse(400, "Invalid post ID");
       }
 
-      // ตรวจสอบว่ามี post นี้หรือไม่
-      const [rows]: any = await pool.query(
-        "SELECT is_active FROM post WHERE post_id = ?",
+      const [result]: any = await pool.query(
+        `UPDATE post
+       SET is_active = CASE WHEN COALESCE(is_active,0) = 1 THEN 0 ELSE 1 END
+       WHERE post_id = ?`,
         [postId]
       );
-      if (!rows || rows.length === 0) {
+
+      if (!result || result.affectedRows === 0) {
         return createErrorResponse(404, "Post not found");
       }
 
-      // toggle ค่า
-      const currentStatus = rows[0].is_active;
-      const newStatus = currentStatus == 1 ? 0 : 1;
-      const [result]: any = await pool.query(
-        "UPDATE post SET is_active = ? WHERE post_id = ?",
-        [newStatus, postId]
+      const [afterRows]: any = await pool.query(
+        "SELECT COALESCE(is_active,0) AS is_active FROM post WHERE post_id = ?",
+        [postId]
       );
+      const newStatus = afterRows?.[0]?.is_active === 1 ? 1 : 0;
 
-      if (result.affectedRows === 0) {
-        return createErrorResponse(500, "Failed to update status");
-      }
-      return {
-        status: 200,
-        success: true,
-        message: "Post status updated successfully",
-        data: {
-          post_id: postId,
-          previous_status: currentStatus,
-          new_status: newStatus,
-        },
-      };
+      return createSuccessResponse(200, "Post status updated successfully", {
+        post_id: postId,
+        new_status: newStatus,
+      });
     } catch (error) {
       console.error("Error updating post status:", error);
       return createErrorResponse(500, "Internal server error");
