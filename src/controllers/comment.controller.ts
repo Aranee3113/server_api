@@ -11,6 +11,7 @@ interface ApiResponse<T = any> {
   data?: T;
 }
 
+
 const createErrorResponse = (status: number, message: string): ApiResponse => ({
   status,
   success: false,
@@ -136,26 +137,30 @@ getAllActiveComments: async (): Promise<ApiResponse> => {
 
   //อัปเดตสถานะ is_active
   updateStatusCommentActive: async (ctx: any): Promise<ApiResponse> => {
-    try {
-      const commentId = parseInt(ctx.params.id);
-      const [current]: any = await pool.query(
-        `SELECT is_active FROM comment WHERE comment_id = ?`,
-        [commentId]
-      );
-      const newStatus = current[0].is_active === 1 ? null : 1;
-      await pool.query(
-        `UPDATE comment SET is_active = ? WHERE comment_id = ?`,
-        [newStatus, commentId]
-      );
-      return createSuccessResponse(
-        200,
-        newStatus === 1 ? "Comment approved" : "Comment unapproved"
-      );
-    } catch (error) {
-      console.error("Error updating comment status:", error);
-      return createErrorResponse(500, "Internal server error");
-    }
-  },
+  try {
+    const commentId = parseInt(ctx.params.id);
+    const [current]: any = await pool.query(
+      `SELECT is_active FROM comment WHERE comment_id = ?`,
+      [commentId]
+    );
+
+    const currentVal = current?.[0]?.is_active ?? 0;
+    const newStatus = currentVal === 1 ? 0 : 1;  
+
+    await pool.query(
+      `UPDATE comment SET is_active = ? WHERE comment_id = ?`,
+      [newStatus, commentId]
+    );
+
+    return createSuccessResponse(
+      200,
+      newStatus === 1 ? "Comment approved" : "Comment unapproved"
+    );
+  } catch (error) {
+    console.error("Error updating comment status:", error);
+    return createErrorResponse(500, "Internal server error");
+  }
+},
 
   //ลบคอมเมนต์ (และลบรูปออกจากโฟลเดอร์ด้วย)
   deleteCommentById: async (ctx: any): Promise<ApiResponse> => {

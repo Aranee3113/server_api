@@ -54,11 +54,20 @@ const createSuccessResponse = (
   ...(data && { data }),
 });
 
-const saveImageFile = async (file: any, postId: number): Promise<{ post_image_id: number, post_image_path: string } | null> => {
+const saveImageFile = async (
+  file: any,
+  postId: number
+): Promise<{ post_image_id: number; post_image_path: string } | null> => {
   if (!file || !file.name || !file.size) return null;
   const buffer = Buffer.from(await file.arrayBuffer());
   const filename = generateUniqueFilename(file.name);
-  const filepath = path.join(process.cwd(), "public", "uploads", "post", filename);
+  const filepath = path.join(
+    process.cwd(),
+    "public",
+    "uploads",
+    "post",
+    filename
+  );
   await writeFile(filepath, buffer);
   const filename_insert = "/uploads/post/" + filename;
   const [result]: any = await pool.query(
@@ -154,7 +163,6 @@ export const post_controller = {
             WHERE c.post_id = p.post_id AND c.is_active = 1
           ) AS comments
         FROM post p
-        WHERE p.is_active = 1
         ORDER BY p.post_timestamp DESC
       `;
 
@@ -164,7 +172,11 @@ export const post_controller = {
         return createSuccessResponse(204, "No posts found", []);
       }
 
-      return createSuccessResponse(200, "Posts with comments retrieved successfully", rows);
+      return createSuccessResponse(
+        200,
+        "Posts with comments retrieved successfully",
+        rows
+      );
     } catch (error) {
       console.error("Error getting all posts with comments:", error);
       return createErrorResponse(500, "Internal server error");
@@ -225,7 +237,9 @@ export const post_controller = {
       const user_id = formData.get("user_id")?.toString();
       const post_timestamp_input = formData.get("post_timestamp")?.toString();
       const files = formData.getAll("post_images");
-      const keepImageIds = formData.getAll("keep_image_ids").map(id => parseInt(id.toString()));
+      const keepImageIds = formData
+        .getAll("keep_image_ids")
+        .map((id) => parseInt(id.toString()));
 
       if (!post_name || !post_description || !user_id) {
         return createErrorResponse(400, "Missing required fields");
@@ -247,11 +261,15 @@ export const post_controller = {
         .filter((img: any) => !keepImageIds.includes(img.post_image_id))
         .map(async (img: any) => {
           await deleteImageFile(img.post_image_path);
-          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [img.post_image_id]);
+          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [
+            img.post_image_id,
+          ]);
         });
       await Promise.all(deletePromises);
 
-      const saveImagePromises = files.map((file: any) => saveImageFile(file, postId));
+      const saveImagePromises = files.map((file: any) =>
+        saveImageFile(file, postId)
+      );
       await Promise.all(saveImagePromises);
 
       return createSuccessResponse(200, "Post updated successfully");
@@ -271,13 +289,19 @@ export const post_controller = {
         [postId]
       );
 
-      const deleteFilePromises = images.map((image: any) => deleteImageFile(image.post_image_path));
+      const deleteFilePromises = images.map((image: any) =>
+        deleteImageFile(image.post_image_path)
+      );
       await Promise.all(deleteFilePromises);
 
       await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [postId]);
-      const [result]: any = await pool.query(`DELETE FROM post WHERE post_id = ?`, [postId]);
+      const [result]: any = await pool.query(
+        `DELETE FROM post WHERE post_id = ?`,
+        [postId]
+      );
 
-      if (result.affectedRows === 0) return createErrorResponse(404, "Post not found");
+      if (result.affectedRows === 0)
+        return createErrorResponse(404, "Post not found");
 
       return createSuccessResponse(200, "Post deleted successfully");
     } catch (error) {
@@ -305,31 +329,58 @@ export const post_controller = {
       `;
 
       const [rows]: any = await pool.query(sql);
-      if (!rows || rows.length === 0) return createSuccessResponse(204, "No active posts found", []);
+      if (!rows || rows.length === 0)
+        return createSuccessResponse(204, "No active posts found", []);
 
-      return createSuccessResponse(200, "Active posts retrieved successfully", rows);
+      return createSuccessResponse(
+        200,
+        "Active posts retrieved successfully",
+        rows
+      );
     } catch (error) {
       console.error("Error getting active posts:", error);
       return createErrorResponse(500, "Internal server error");
     }
   },
 
+  // แทนที่ฟังก์ชันเดิมใน post_controller
   updateStatusActive: async (ctx: any): Promise<ApiResponse> => {
     try {
-      const postId = parseInt(ctx.params.id);
-      if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
+      const postId = Number(ctx.params.id);
+      if (isNaN(postId)) {
+        return createErrorResponse(400, "Invalid post ID");
+      }
 
-      const [currentStatus]: any = await pool.query("SELECT is_active FROM post WHERE post_id = ?", [postId]);
-      if (!currentStatus || currentStatus.length === 0) return createErrorResponse(404, "Post not found");
+      // ตรวจสอบว่ามี post นี้หรือไม่
+      const [rows]: any = await pool.query(
+        "SELECT is_active FROM post WHERE post_id = ?",
+        [postId]
+      );
+      if (!rows || rows.length === 0) {
+        return createErrorResponse(404, "Post not found");
+      }
 
-      const isActive = currentStatus[0]?.is_active;
-      const newStatus = isActive === 1 ? null : 1;
+      // toggle ค่า
+      const currentStatus = rows[0].is_active;
+      const newStatus = currentStatus == 1 ? 0 : 1;
+      const [result]: any = await pool.query(
+        "UPDATE post SET is_active = ? WHERE post_id = ?",
+        [newStatus, postId]
+      );
 
-      const [result]: any = await pool.query(`UPDATE post SET is_active = ? WHERE post_id = ?`, [newStatus, postId]);
-      if (result.affectedRows === 0) return createErrorResponse(404, "Post not found");
-
-      const message = newStatus === 1 ? "Post activated successfully" : "Post deactivated successfully";
-      return createSuccessResponse(200, message);
+      if (result.affectedRows === 0) {
+        return createErrorResponse(500, "Failed to update status");
+      }
+      return {
+        status: 200,
+        success: true,
+        message: "Post status updated successfully",
+        data: {
+          post_id: postId,
+          previous_status: currentStatus,
+          new_status: newStatus,
+        },
+      };
     } catch (error) {
       console.error("Error updating post status:", error);
       return createErrorResponse(500, "Internal server error");
