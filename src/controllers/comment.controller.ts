@@ -11,7 +11,6 @@ interface ApiResponse<T = any> {
   data?: T;
 }
 
-
 const createErrorResponse = (status: number, message: string): ApiResponse => ({
   status,
   success: false,
@@ -43,14 +42,20 @@ const saveCommentImage = async (file: any): Promise<string | null> => {
   await mkdir(uploadDir, { recursive: true });
   const filepath = path.join(uploadDir, filename);
   await writeFile(filepath, buffer);
-  var filename_insert='/uploads/comment/' + filename
+  var filename_insert = "/uploads/comment/" + filename;
   return filename_insert;
 };
 
 const deleteCommentImage = async (imagePath: string): Promise<void> => {
   if (!imagePath) return;
-  const filepath = path.join(process.cwd(), "public", "uploads","comment", imagePath);
-  await unlink(filepath).catch(() => {}); 
+  const filepath = path.join(
+    process.cwd(),
+    "public",
+    "uploads",
+    "comment",
+    imagePath
+  );
+  await unlink(filepath).catch(() => {});
 };
 
 export const comment_controller = {
@@ -83,9 +88,9 @@ export const comment_controller = {
   },
 
   // แสดงคอมเมนต์ที่อนุมัติแล้วทั้งหมด
-getAllActiveComments: async (): Promise<ApiResponse> => {
-  try {
-    const sql = `
+  getAllActiveComments: async (): Promise<ApiResponse> => {
+    try {
+      const sql = `
       SELECT 
         c.comment_id,
         c.comment_text,
@@ -101,18 +106,22 @@ getAllActiveComments: async (): Promise<ApiResponse> => {
       ORDER BY c.comment_timestamp DESC
     `;
 
-    const [rows]: any = await pool.query(sql);
+      const [rows]: any = await pool.query(sql);
 
-    if (!rows || rows.length === 0) {
-      return createSuccessResponse(204, "No active comments found", []);
+      if (!rows || rows.length === 0) {
+        return createSuccessResponse(204, "No active comments found", []);
+      }
+
+      return createSuccessResponse(
+        200,
+        "Active comments retrieved successfully",
+        rows
+      );
+    } catch (error) {
+      console.error("Error getting active comments:", error);
+      return createErrorResponse(500, "Internal server error");
     }
-
-    return createSuccessResponse(200, "Active comments retrieved successfully", rows);
-  } catch (error) {
-    console.error("Error getting active comments:", error);
-    return createErrorResponse(500, "Internal server error");
-  }
-},
+  },
 
   //แสดงคอมเมนต์ทั้งหมด
   getAllComments: async (): Promise<ApiResponse> => {
@@ -136,30 +145,30 @@ getAllActiveComments: async (): Promise<ApiResponse> => {
 
   //อัปเดตสถานะ is_active
   updateStatusCommentActive: async (ctx: any): Promise<ApiResponse> => {
-  try {
-    const commentId = parseInt(ctx.params.id);
-    const [current]: any = await pool.query(
-      `SELECT is_active FROM comment WHERE comment_id = ?`,
-      [commentId]
-    );
+    try {
+      const commentId = parseInt(ctx.params.id);
+      const [current]: any = await pool.query(
+        `SELECT is_active FROM comment WHERE comment_id = ?`,
+        [commentId]
+      );
 
-    const currentVal = current?.[0]?.is_active ?? 0;
-    const newStatus = currentVal === 1 ? 0 : 1;  
+      const currentVal = current?.[0]?.is_active ?? 0;
+      const newStatus = currentVal === 1 ? 0 : 1;
 
-    await pool.query(
-      `UPDATE comment SET is_active = ? WHERE comment_id = ?`,
-      [newStatus, commentId]
-    );
+      await pool.query(
+        `UPDATE comment SET is_active = ? WHERE comment_id = ?`,
+        [newStatus, commentId]
+      );
 
-    return createSuccessResponse(
-      200,
-      newStatus === 1 ? "Comment approved" : "Comment unapproved"
-    );
-  } catch (error) {
-    console.error("Error updating comment status:", error);
-    return createErrorResponse(500, "Internal server error");
-  }
-},
+      return createSuccessResponse(
+        200,
+        newStatus === 1 ? "Comment approved" : "Comment unapproved"
+      );
+    } catch (error) {
+      console.error("Error updating comment status:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
 
   //ลบคอมเมนต์ (และลบรูปออกจากโฟลเดอร์ด้วย)
   deleteCommentById: async (ctx: any): Promise<ApiResponse> => {
