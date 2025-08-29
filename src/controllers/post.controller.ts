@@ -4,6 +4,7 @@ import { writeFile, unlink } from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { jwtDecode } from "jwt-decode";
+
 interface PostData {
   post_id?: number;
   post_name: string;
@@ -87,20 +88,19 @@ const deleteImageFile = async (imagePath: string): Promise<void> => {
 export const post_controller = {
   createpost: async (ctx: any): Promise<ApiResponse> => {
     try {
-      console.log(ctx.headers.authorization.split("Bearer ")[1]);
-      const token = ctx.headers.authorization.split("Bearer ")[1];
-
-      const  deccode_jwt  = await jwtDecode(token);
-      // console.log(user_id.userId);
-      const user_id = deccode_jwt.userId;
-      console.log(user_id);
-      
+      // console.log(ctx.headers.authorization.split(" ")[1]);
+      const token = ctx.headers.authorization.split(" ")[1];
+      const decoded = jwtDecode(token);
+      // console.log(decoded.userId);
       const formData = await ctx.request.formData();
       const post_name = formData.get("post_name")?.toString().trim();
       const post_description = formData
         .get("post_description")
         ?.toString()
         .trim();
+
+      const user_id = decoded.userId;
+
       const images = formData.getAll("post_images");
 
       if (!post_name || !post_description ) {
