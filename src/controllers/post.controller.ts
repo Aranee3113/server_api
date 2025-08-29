@@ -92,22 +92,24 @@ export const post_controller = {
       const token = ctx.headers.authorization.split(" ")[1];
       const decoded = jwtDecode(token);
       // console.log(decoded.userId);
-
       const formData = await ctx.request.formData();
       const post_name = formData.get("post_name")?.toString().trim();
       const post_description = formData
         .get("post_description")
         ?.toString()
         .trim();
+
       const user_id = decoded.userId;
+
       const images = formData.getAll("post_images");
 
-      if (!post_name || !post_description || Number.isNaN(user_id)) {
+      if (!post_name || !post_description ) {
         return createErrorResponse(400, "Missing required fields");
       }
 
       const post_timestamp = formatTimestamp();
-
+      console.log(formData);
+      
       // 👇 บังคับ is_active = 0
       const [result]: any = await pool.query(
         `INSERT INTO post (post_name, post_description, post_timestamp, user_id, is_active)
