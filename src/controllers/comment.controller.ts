@@ -1,8 +1,8 @@
 import pool from "../utils/db";
-import { format } from "date-fns";
 import { writeFile, unlink, mkdir } from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
+import { jwtDecode } from "jwt-decode";
 
 interface ApiResponse<T = any> {
   status: number;
@@ -62,9 +62,11 @@ export const comment_controller = {
   //เพิ่มคอมเมนต์ใหม่
   createComment: async (ctx: any): Promise<ApiResponse> => {
     try {
+      const token = ctx.headers.authorization.split(" ")[1];
+      const decoded = jwtDecode(token);
       const formData = await ctx.request.formData();
       const post_id = parseInt(formData.get("post_id")?.toString() || "");
-      const user_id = parseInt(formData.get("user_id")?.toString() || "");
+      const user_id = decoded.userId;
       const comment_text = formData.get("comment_text")?.toString();
       const imageFile = formData.get("comment_image");
 
@@ -87,41 +89,6 @@ export const comment_controller = {
     }
   },
 
-  // แสดงคอมเมนต์ที่อนุมัติแล้วทั้งหมด
-  getAllActiveComments: async (): Promise<ApiResponse> => {
-    try {
-      const sql = `
-      SELECT 
-        c.comment_id,
-        c.comment_text,
-        c.comment_image_path,
-        c.comment_timestamp,
-        u.user_id,
-        u.user_name,
-        p.post_id,
-        p.post_name
-      FROM comment c
-      INNER JOIN user u ON u.user_id = c.user_id
-      INNER JOIN post p ON p.post_id = c.post_id
-      ORDER BY c.comment_timestamp DESC
-    `;
-
-      const [rows]: any = await pool.query(sql);
-
-      if (!rows || rows.length === 0) {
-        return createSuccessResponse(204, "No active comments found", []);
-      }
-
-      return createSuccessResponse(
-        200,
-        "Active comments retrieved successfully",
-        rows
-      );
-    } catch (error) {
-      console.error("Error getting active comments:", error);
-      return createErrorResponse(500, "Internal server error");
-    }
-  },
 
   //แสดงคอมเมนต์ทั้งหมด
   getAllComments: async (): Promise<ApiResponse> => {
@@ -143,32 +110,6 @@ export const comment_controller = {
     }
   },
 
-  //อัปเดตสถานะ is_active
-  updateStatusCommentActive: async (ctx: any): Promise<ApiResponse> => {
-    try {
-      const commentId = parseInt(ctx.params.id);
-      const [current]: any = await pool.query(
-        `SELECT is_active FROM comment WHERE comment_id = ?`,
-        [commentId]
-      );
-
-      const currentVal = current?.[0]?.is_active ?? 0;
-      const newStatus = currentVal === 1 ? 0 : 1;
-
-      await pool.query(
-        `UPDATE comment SET is_active = ? WHERE comment_id = ?`,
-        [newStatus, commentId]
-      );
-
-      return createSuccessResponse(
-        200,
-        newStatus === 1 ? "Comment approved" : "Comment unapproved"
-      );
-    } catch (error) {
-      console.error("Error updating comment status:", error);
-      return createErrorResponse(500, "Internal server error");
-    }
-  },
 
   //ลบคอมเมนต์ (และลบรูปออกจากโฟลเดอร์ด้วย)
   deleteCommentById: async (ctx: any): Promise<ApiResponse> => {
