@@ -181,7 +181,7 @@ export const post_controller = {
             )
             FROM comment c
             JOIN user u ON u.user_id = c.user_id
-            WHERE c.post_id = p.post_id AND c.is_active = 1
+            WHERE c.post_id = p.post_id 
           ) AS comments
         FROM post p
         ORDER BY p.post_timestamp DESC
