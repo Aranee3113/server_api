@@ -77,8 +77,8 @@ export const comment_controller = {
       const image_path = await saveCommentImage(imageFile);
 
       await pool.query(
-        `INSERT INTO comment (post_id, user_id, comment_text, comment_image_path, is_active)
-         VALUES (?, ?, ?, ?, 0)`,
+        `INSERT INTO comment (post_id, user_id, comment_text, comment_image_path )
+         VALUES (?, ?, ?, ?)`,
         [post_id, user_id, comment_text, image_path]
       );
 
@@ -94,7 +94,7 @@ export const comment_controller = {
   getAllComments: async (): Promise<ApiResponse> => {
     try {
       const sql = `
-        SELECT c.comment_id, c.comment_text, c.comment_image_path, c.comment_timestamp, c.is_active,
+        SELECT c.comment_id, c.comment_text, c.comment_image_path, c.comment_timestamp, 
                p.post_id, p.post_name,
                u.user_id, u.user_name
         FROM comment c
