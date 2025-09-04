@@ -62,13 +62,11 @@ export const comment_controller = {
   //เพิ่มคอมเมนต์ใหม่
 createComment: async (ctx: any): Promise<ApiResponse> => {
   try {
-    // ✅ ตรวจสอบ Authorization header
     const authHeader = ctx.headers?.authorization;
     if (!authHeader) {
       return createErrorResponse(401, "Missing authorization header");
     }
 
-    // ✅ รองรับทั้ง "Bearer <token>" และ "<token>"
     const parts = authHeader.split(" ");
     const token = parts.length === 2 ? parts[1] : parts[0];
 
@@ -85,12 +83,10 @@ createComment: async (ctx: any): Promise<ApiResponse> => {
     const comment_text = formData.get("comment_text")?.toString()?.trim();
     const imageFile = formData.get("comment_image");
 
-    // ✅ ตรวจสอบ required fields
     if (!post_id || !user_id || !comment_text) {
       return createErrorResponse(400, "Missing required fields");
     }
 
-    // ✅ ถ้ามีรูปให้บันทึก ถ้าไม่มีให้ null
     let image_path: string | null = null;
     if (
       imageFile &&
