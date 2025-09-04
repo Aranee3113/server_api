@@ -88,10 +88,19 @@ const deleteImageFile = async (imagePath: string): Promise<void> => {
 export const post_controller = {
   createpost: async (ctx: any): Promise<ApiResponse> => {
     try {
-      // console.log(ctx.headers.authorization.split(" ")[1]);
-      const token = ctx.headers.authorization.split(" ")[1];
-      const decoded = jwtDecode(token);
-      // console.log(decoded.userId);
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader) {
+        return createErrorResponse(401, "Missing authorization header");
+      }
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+
       const formData = await ctx.request.formData();
       const post_name = formData.get("post_name")?.toString().trim();
       const post_description = formData
@@ -99,18 +108,14 @@ export const post_controller = {
         ?.toString()
         .trim();
 
-      const user_id = decoded.userId;
-
-      const images = formData.getAll("post_images");
-
       if (!post_name || !post_description) {
         return createErrorResponse(400, "Missing required fields");
       }
 
+      const user_id = decoded.userId; // ✅ ใช้จาก token เท่านั้น
+      const images = formData.getAll("post_images") || [];
       const post_timestamp = formatTimestamp();
-      console.log(formData);
 
-      // 👇 บังคับ is_active = 0
       const [result]: any = await pool.query(
         `INSERT INTO post (post_name, post_description, post_timestamp, user_id, is_active)
        VALUES (?, ?, ?, ?, 0)`,
@@ -121,7 +126,6 @@ export const post_controller = {
       const imageData: any[] = [];
 
       for (const file of images) {
-        // กันเคสที่ไม่ใช่ไฟล์จริง
         // @ts-ignore
         if (
           !file ||
@@ -139,7 +143,7 @@ export const post_controller = {
         post_description,
         post_timestamp,
         user_id,
-        is_active: 0, // 👈 เพิ่มให้ชัดเจน
+        is_active: 0,
         images: imageData,
       });
     } catch (error) {
