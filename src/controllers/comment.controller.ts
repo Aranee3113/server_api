@@ -60,35 +60,63 @@ const deleteCommentImage = async (imagePath: string): Promise<void> => {
 
 export const comment_controller = {
   //เพิ่มคอมเมนต์ใหม่
-  createComment: async (ctx: any): Promise<ApiResponse> => {
-    try {
-      const token = ctx.headers.authorization.split(" ")[1];
-      const decoded = jwtDecode(token);
-      const formData = await ctx.request.formData();
-      const post_id = parseInt(formData.get("post_id")?.toString() || "");
-      const user_id = decoded.userId;
-      const comment_text = formData.get("comment_text")?.toString();
-      const imageFile = formData.get("comment_image");
-
-      if (!post_id || !user_id || !comment_text) {
-        return createErrorResponse(400, "Missing required fields");
-      }
-
-      const image_path = await saveCommentImage(imageFile);
-
-      await pool.query(
-        `INSERT INTO comment (post_id, user_id, comment_text, comment_image_path )
-         VALUES (?, ?, ?, ?)`,
-        [post_id, user_id, comment_text, image_path]
-      );
-
-      return createSuccessResponse(201, "Comment submitted for approval");
-    } catch (error) {
-      console.error("Error creating comment:", error);
-      return createErrorResponse(500, "Internal server error");
+createComment: async (ctx: any): Promise<ApiResponse> => {
+  try {
+    // ✅ ตรวจสอบ Authorization header
+    const authHeader = ctx.headers?.authorization;
+    if (!authHeader) {
+      return createErrorResponse(401, "Missing authorization header");
     }
-  },
 
+    // ✅ รองรับทั้ง "Bearer <token>" และ "<token>"
+    const parts = authHeader.split(" ");
+    const token = parts.length === 2 ? parts[1] : parts[0];
+
+    let decoded: any;
+    try {
+      decoded = jwtDecode(token);
+    } catch {
+      return createErrorResponse(401, "Invalid token");
+    }
+
+    const formData = await ctx.request.formData();
+    const post_id = parseInt(formData.get("post_id")?.toString() || "");
+    const user_id = decoded.userId;
+    const comment_text = formData.get("comment_text")?.toString()?.trim();
+    const imageFile = formData.get("comment_image");
+
+    // ✅ ตรวจสอบ required fields
+    if (!post_id || !user_id || !comment_text) {
+      return createErrorResponse(400, "Missing required fields");
+    }
+
+    // ✅ ถ้ามีรูปให้บันทึก ถ้าไม่มีให้ null
+    let image_path: string | null = null;
+    if (
+      imageFile &&
+      typeof imageFile !== "string" &&
+      typeof (imageFile as any).arrayBuffer === "function"
+    ) {
+      image_path = await saveCommentImage(imageFile);
+    }
+
+    await pool.query(
+      `INSERT INTO comment (post_id, user_id, comment_text, comment_image_path)
+       VALUES (?, ?, ?, ?)`,
+      [post_id, user_id, comment_text, image_path]
+    );
+
+    return createSuccessResponse(201, "Comment created successfully", {
+      post_id,
+      user_id,
+      comment_text,
+      comment_image_path: image_path,
+    });
+  } catch (error) {
+    console.error("Error creating comment:", error);
+    return createErrorResponse(500, "Internal server error");
+  }
+},
 
   //แสดงคอมเมนต์ทั้งหมด
   getAllComments: async (): Promise<ApiResponse> => {
