@@ -103,13 +103,13 @@ export const post_controller = {
 
       const images = formData.getAll("post_images");
 
-      if (!post_name || !post_description ) {
+      if (!post_name || !post_description) {
         return createErrorResponse(400, "Missing required fields");
       }
 
       const post_timestamp = formatTimestamp();
       console.log(formData);
-      
+
       // 👇 บังคับ is_active = 0
       const [result]: any = await pool.query(
         `INSERT INTO post (post_name, post_description, post_timestamp, user_id, is_active)
@@ -334,18 +334,18 @@ export const post_controller = {
   getPostIsActive: async (_ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
-      SELECT
-        p.post_id,
-        p.post_name, 
-        p.post_description, 
-        p.post_timestamp, 
-        u.user_id, 
-        u.user_name, 
-        u.user_username, 
-        COALESCE(p.is_active,0) AS is_active
+      SELECT 
+          p.post_id,
+          p.post_name,
+          p.post_description,
+          p.post_timestamp,
+          u.user_id,
+          u.user_name,
+          u.user_username,
+          COALESCE(p.is_active, 0) AS is_active
       FROM \`user\` u
       INNER JOIN post p ON u.user_id = p.user_id
-      WHERE COALESCE(p.is_active,0) = 1
+      WHERE COALESCE(p.is_active, 0) = 1
       ORDER BY p.post_timestamp DESC
     `;
 

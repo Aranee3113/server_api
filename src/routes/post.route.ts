@@ -1,4 +1,3 @@
-// post.routes.ts
 import { Elysia } from "elysia";
 import { post_controller } from "../controllers/post.controller";
 
