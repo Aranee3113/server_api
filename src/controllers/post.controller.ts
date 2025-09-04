@@ -339,18 +339,28 @@ export const post_controller = {
     try {
       const sql = `
       SELECT 
-          p.post_id,
-          p.post_name,
-          p.post_description,
-          p.post_timestamp,
-          u.user_id,
-          u.user_name,
-          u.user_username,
-          COALESCE(p.is_active, 0) AS is_active
-      FROM \`user\` u
-      INNER JOIN post p ON u.user_id = p.user_id
-      WHERE COALESCE(p.is_active, 0) = 1
-      ORDER BY p.post_timestamp DESC
+    p.post_id,
+    p.post_name,
+    p.post_description,
+    p.post_timestamp,
+    u.user_id,
+    u.user_name,
+    u.user_username,
+    COALESCE(p.is_active, 0) AS is_active,
+    (
+      SELECT JSON_ARRAYAGG(
+        JSON_OBJECT(
+          'post_image_id', i.post_image_id,
+          'post_image_path', i.post_image_path
+        )
+      )
+      FROM post_image i
+      WHERE i.post_id = p.post_id
+    ) AS images
+  FROM \`user\` u
+  INNER JOIN post p ON u.user_id = p.user_id
+  WHERE COALESCE(p.is_active, 0) = 1
+  ORDER BY p.post_timestamp DESC
     `;
 
       const [rows]: any = await pool.query(sql);
