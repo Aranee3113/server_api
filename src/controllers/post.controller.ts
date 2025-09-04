@@ -252,88 +252,122 @@ export const post_controller = {
   },
 
   updatepostById: async (ctx: any): Promise<ApiResponse> => {
+  try {
+    const authHeader = ctx.headers?.authorization;
+    if (!authHeader) return createErrorResponse(401, "Missing authorization header");
+
+    const token = authHeader.split(" ")[1];
+    let decoded: any;
     try {
-      const postId = parseInt(ctx.params.id);
-      if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
-
-      const formData = await ctx.request.formData();
-      const post_name = formData.get("post_name")?.toString();
-      const post_description = formData.get("post_description")?.toString();
-      const user_id = formData.get("user_id")?.toString();
-      const post_timestamp_input = formData.get("post_timestamp")?.toString();
-      const files = formData.getAll("post_images");
-      const keepImageIds = formData
-        .getAll("keep_image_ids")
-        .map((id) => parseInt(id.toString()));
-
-      if (!post_name || !post_description || !user_id) {
-        return createErrorResponse(400, "Missing required fields");
-      }
-
-      const post_timestamp = formatTimestamp(post_timestamp_input);
-
-      await pool.query(
-        `UPDATE post SET post_name = ?, post_description = ?, post_timestamp = ?, user_id = ? WHERE post_id = ?`,
-        [post_name, post_description, post_timestamp, user_id, postId]
-      );
-
-      const [currentImages]: any = await pool.query(
-        `SELECT post_image_id, post_image_path FROM post_image WHERE post_id = ?`,
-        [postId]
-      );
-
-      const deletePromises = currentImages
-        .filter((img: any) => !keepImageIds.includes(img.post_image_id))
-        .map(async (img: any) => {
-          await deleteImageFile(img.post_image_path);
-          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [
-            img.post_image_id,
-          ]);
-        });
-      await Promise.all(deletePromises);
-
-      const saveImagePromises = files.map((file: any) =>
-        saveImageFile(file, postId)
-      );
-      await Promise.all(saveImagePromises);
-
-      return createSuccessResponse(200, "Post updated successfully");
-    } catch (error) {
-      console.error("Error updating post:", error);
-      return createErrorResponse(500, "Internal server error");
+      decoded = jwtDecode(token);
+    } catch {
+      return createErrorResponse(401, "Invalid token");
     }
-  },
+    const userIdFromToken = decoded.userId;
+
+    const postId = parseInt(ctx.params.id);
+    if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
+
+    // ตรวจสอบว่าโพสต์นี้เป็นของ user จริงไหม
+    const [postRows]: any = await pool.query(
+      `SELECT user_id FROM post WHERE post_id = ?`,
+      [postId]
+    );
+    if (!postRows.length) return createErrorResponse(404, "Post not found");
+    if (postRows[0].user_id !== userIdFromToken) {
+      return createErrorResponse(403, "You are not allowed to edit this post");
+    }
+
+    const formData = await ctx.request.formData();
+    const post_name = formData.get("post_name")?.toString();
+    const post_description = formData.get("post_description")?.toString();
+    const post_timestamp_input = formData.get("post_timestamp")?.toString();
+    const files = formData.getAll("post_images");
+    const keepImageIds = formData
+      .getAll("keep_image_ids")
+      .map((id) => parseInt(id.toString()));
+
+    if (!post_name || !post_description) {
+      return createErrorResponse(400, "Missing required fields");
+    }
+
+    const post_timestamp = formatTimestamp(post_timestamp_input);
+
+    await pool.query(
+      `UPDATE post SET post_name = ?, post_description = ?, post_timestamp = ? WHERE post_id = ?`,
+      [post_name, post_description, post_timestamp, postId]
+    );
+
+    // ✅ ลบรูปเก่าที่ไม่ได้เลือก keep
+    const [currentImages]: any = await pool.query(
+      `SELECT post_image_id, post_image_path FROM post_image WHERE post_id = ?`,
+      [postId]
+    );
+    const deletePromises = currentImages
+      .filter((img: any) => !keepImageIds.includes(img.post_image_id))
+      .map(async (img: any) => {
+        await deleteImageFile(img.post_image_path);
+        await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [img.post_image_id]);
+      });
+    await Promise.all(deletePromises);
+
+    // ✅ บันทึกรูปใหม่
+    const saveImagePromises = files.map((file: any) => saveImageFile(file, postId));
+    await Promise.all(saveImagePromises);
+
+    return createSuccessResponse(200, "Post updated successfully");
+  } catch (error) {
+    console.error("Error updating post:", error);
+    return createErrorResponse(500, "Internal server error");
+  }
+},
+
 
   deletepostById: async (ctx: any): Promise<ApiResponse> => {
+  try {
+    const authHeader = ctx.headers?.authorization;
+    if (!authHeader) return createErrorResponse(401, "Missing authorization header");
+
+    const token = authHeader.split(" ")[1];
+    let decoded: any;
     try {
-      const postId = parseInt(ctx.params.id);
-      if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
-
-      const [images]: any = await pool.query(
-        `SELECT post_image_path FROM post_image WHERE post_id = ?`,
-        [postId]
-      );
-
-      const deleteFilePromises = images.map((image: any) =>
-        deleteImageFile(image.post_image_path)
-      );
-      await Promise.all(deleteFilePromises);
-
-      await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [postId]);
-      const [result]: any = await pool.query(
-        `DELETE FROM post WHERE post_id = ?`,
-        [postId]
-      );
-
-      if (result.affectedRows === 0)
-        return createErrorResponse(404, "Post not found");
-
-      return createSuccessResponse(200, "Post deleted successfully");
-    } catch (error) {
-      console.error("Error deleting post:", error);
-      return createErrorResponse(500, "Internal server error");
+      decoded = jwtDecode(token);
+    } catch {
+      return createErrorResponse(401, "Invalid token");
     }
-  },
+    const userIdFromToken = decoded.userId;
+
+    const postId = parseInt(ctx.params.id);
+    if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
+
+    // ✅ ตรวจสอบว่าโพสต์นี้เป็นของ user จริงไหม
+    const [postRows]: any = await pool.query(
+      `SELECT user_id FROM post WHERE post_id = ?`,
+      [postId]
+    );
+    if (!postRows.length) return createErrorResponse(404, "Post not found");
+    if (postRows[0].user_id !== userIdFromToken) {
+      return createErrorResponse(403, "You are not allowed to delete this post");
+    }
+
+    const [images]: any = await pool.query(
+      `SELECT post_image_path FROM post_image WHERE post_id = ?`,
+      [postId]
+    );
+
+    const deleteFilePromises = images.map((image: any) => deleteImageFile(image.post_image_path));
+    await Promise.all(deleteFilePromises);
+
+    await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [postId]);
+    await pool.query(`DELETE FROM post WHERE post_id = ?`, [postId]);
+
+    return createSuccessResponse(200, "Post deleted successfully");
+  } catch (error) {
+    console.error("Error deleting post:", error);
+    return createErrorResponse(500, "Internal server error");
+  }
+},
+
 
   getPostIsActive: async (_ctx: any): Promise<ApiResponse> => {
     try {
