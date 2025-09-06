@@ -1,4 +1,4 @@
-import pool from "../utils/db";
+import { pool } from "../utils/db";
 import { format } from "date-fns";
 import { writeFile, unlink } from "fs/promises";
 import path from "path";

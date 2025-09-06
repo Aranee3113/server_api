@@ -1,4 +1,4 @@
-import pool from "../utils/db";
+import { pool } from "../utils/db";
 import { writeFile, unlink, mkdir } from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";

@@ -1,5 +1,5 @@
 import { status } from "elysia";
-import pool from "../utils/db";
+import { pool } from "../utils/db";
 import { writeFile, unlink } from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";

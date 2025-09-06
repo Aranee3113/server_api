@@ -1,4 +1,4 @@
-import pool from "../utils/db";
+import { pool } from "../utils/db";
 import bcrypt from "bcrypt";
 
 export const auth_controller = {
