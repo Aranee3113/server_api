@@ -4,6 +4,7 @@ import { auth_route } from "./guard.route";
 import { productRoutes } from "./product.route";
 import { postRoutes } from "./post.route";
 import { commentRoutes } from "./comment.route";
+import { ratingRoute } from "./rating.route"; 
 
 const r = new Elysia();
 
@@ -13,6 +14,7 @@ r.group("/api", (app) =>
      .use(productRoutes)
      .use(postRoutes)
      .use(commentRoutes)
+     .use(ratingRoute)
 );
 
 export default r;
