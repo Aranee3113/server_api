@@ -48,15 +48,16 @@ const saveCommentImage = async (file: any): Promise<string | null> => {
 
 const deleteCommentImage = async (imagePath: string): Promise<void> => {
   if (!imagePath) return;
-  const filepath = path.join(
-    process.cwd(),
-    "public",
-    "uploads",
-    "comment",
-    imagePath
-  );
-  await unlink(filepath).catch(() => {});
+
+  // รองรับทั้งกรณีที่ได้ '/uploads/comment/xxx.jpg' และ 'xxx.jpg'
+  const relative = imagePath.startsWith("/uploads/")
+    ? imagePath.replace(/^\/+/, "") // ตัด leading slash ออก เพื่อให้ join ได้ผลเป็นภายใต้ public/
+    : `uploads/comment/${imagePath}`;
+
+  const absPath = path.join(process.cwd(), "public", relative);
+  await unlink(absPath).catch(() => {}); // เงียบทิ้งถ้าไฟล์ไม่มี
 };
+
 
 export const comment_controller = {
   //เพิ่มคอมเมนต์ใหม่
@@ -137,55 +138,108 @@ createComment: async (ctx: any): Promise<ApiResponse> => {
 
   //ลบคอมเมนต์ (และลบรูปออกจากโฟลเดอร์ด้วย)
   deleteCommentById: async (ctx: any): Promise<ApiResponse> => {
+  try {
+    const authHeader = ctx.headers?.authorization;
+    if (!authHeader) return createErrorResponse(401, "Missing authorization header");
+
+    const token = authHeader.split(" ")[1] || authHeader;
+    let decoded: any;
     try {
-      const commentId = parseInt(ctx.params.id);
-      const [row]: any = await pool.query(
-        `SELECT comment_image_path FROM comment WHERE comment_id = ?`,
-        [commentId]
-      );
-      const imagePath = row[0]?.comment_image_path;
-      if (imagePath) await deleteCommentImage(imagePath);
-      await pool.query(`DELETE FROM comment WHERE comment_id = ?`, [commentId]);
-      return createSuccessResponse(200, "Comment deleted");
-    } catch (error) {
-      console.error("Error deleting comment:", error);
-      return createErrorResponse(500, "Internal server error");
+      decoded = jwtDecode(token);
+    } catch {
+      return createErrorResponse(401, "Invalid token");
     }
-  },
+    const currentUserId = decoded.userId;
+
+    const commentId = parseInt(ctx.params.id);
+    const [rows]: any = await pool.query(
+      `SELECT user_id, comment_image_path FROM comment WHERE comment_id = ?`,
+      [commentId]
+    );
+    if (!rows.length) return createErrorResponse(404, "Comment not found");
+    if (rows[0].user_id !== currentUserId) {
+      return createErrorResponse(403, "You can only delete your own comments");
+    }
+
+    const imagePath = rows[0]?.comment_image_path;
+    if (imagePath) await deleteCommentImage(imagePath);
+    await pool.query(`DELETE FROM comment WHERE comment_id = ?`, [commentId]);
+    return createSuccessResponse(200, "Comment deleted");
+  } catch (error) {
+    console.error("Error deleting comment:", error);
+    return createErrorResponse(500, "Internal server error");
+  }
+},
 
   //แก้ไขข้อความคอมเมนต์ และรูปใหม่ (ถ้ามี)
   updateCommentById: async (ctx: any): Promise<ApiResponse> => {
+  try {
+    const authHeader = ctx.headers?.authorization;
+    if (!authHeader) return createErrorResponse(401, "Missing authorization header");
+
+    const token = authHeader.split(" ")[1] || authHeader;
+    let decoded: any;
     try {
-      const commentId = parseInt(ctx.params.id);
-      const formData = await ctx.request.formData();
-      const comment_text = formData.get("comment_text")?.toString();
-      const imageFile = formData.get("comment_image");
-
-      let image_path: string | null = null;
-      if (imageFile && imageFile.name && imageFile.size) {
-        // ลบรูปเก่า (ถ้ามี)
-        const [row]: any = await pool.query(
-          `SELECT comment_image_path FROM comment WHERE comment_id = ?`,
-          [commentId]
-        );
-        const oldImage = row[0]?.comment_image_path;
-        if (oldImage) await deleteCommentImage(oldImage);
-
-        image_path = await saveCommentImage(imageFile);
-      }
-
-      const updateSql = image_path
-        ? `UPDATE comment SET comment_text = ?, comment_image_path = ? WHERE comment_id = ?`
-        : `UPDATE comment SET comment_text = ? WHERE comment_id = ?`;
-      const updateParams = image_path
-        ? [comment_text, image_path, commentId]
-        : [comment_text, commentId];
-
-      await pool.query(updateSql, updateParams);
-      return createSuccessResponse(200, "Comment updated");
-    } catch (error) {
-      console.error("Error updating comment:", error);
-      return createErrorResponse(500, "Internal server error");
+      decoded = jwtDecode(token);
+    } catch {
+      return createErrorResponse(401, "Invalid token");
     }
-  },
+    const currentUserId = decoded.userId;
+
+    const commentId = parseInt(ctx.params.id);
+
+    // ตรวจสอบว่าเป็นเจ้าของคอมเมนต์
+    const [rows]: any = await pool.query(
+      `SELECT user_id, comment_image_path FROM comment WHERE comment_id = ?`,
+      [commentId]
+    );
+    if (!rows.length) return createErrorResponse(404, "Comment not found");
+    if (rows[0].user_id !== currentUserId) {
+      return createErrorResponse(403, "You can only edit your own comments");
+    }
+
+    const oldImage = rows[0]?.comment_image_path as string | null;
+
+    const formData = await ctx.request.formData();
+    const comment_text = formData.get("comment_text")?.toString() ?? "";
+    const removeImageFlag =
+      (formData.get("remove_image")?.toString() || "") === "1";
+    const imageFile = formData.get("comment_image") as any | null;
+
+    let newImagePath: string | null = null;
+
+    // ถ้ามีไฟล์ใหม่ → ลบรูปเก่า แล้วบันทึกไฟล์ใหม่
+    if (imageFile && typeof imageFile !== "string" && typeof imageFile.arrayBuffer === "function") {
+      if (oldImage) await deleteCommentImage(oldImage);
+      newImagePath = await saveCommentImage(imageFile);
+    } else if (removeImageFlag) {
+      // ถ้าระบุให้ลบภาพ → ลบรูปเก่า แล้ว set เป็น NULL
+      if (oldImage) await deleteCommentImage(oldImage);
+      newImagePath = null;
+    }
+
+    // สร้าง SQL ตามเคส
+    if (imageFile && newImagePath) {
+      await pool.query(
+        `UPDATE comment SET comment_text = ?, comment_image_path = ? WHERE comment_id = ?`,
+        [comment_text, newImagePath, commentId]
+      );
+    } else if (removeImageFlag) {
+      await pool.query(
+        `UPDATE comment SET comment_text = ?, comment_image_path = NULL WHERE comment_id = ?`,
+        [comment_text, commentId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE comment SET comment_text = ? WHERE comment_id = ?`,
+        [comment_text, commentId]
+      );
+    }
+
+    return createSuccessResponse(200, "Comment updated");
+  } catch (error) {
+    console.error("Error updating comment:", error);
+    return createErrorResponse(500, "Internal server error");
+  }
+},
 };
