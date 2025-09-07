@@ -112,7 +112,7 @@ export const ratingController = {
     }
   },
 
-  // GET /rating/:postId/summary  (สรุป avg, count, breakdown 1..5)
+  // GET /rating/:postId/summary  (ดึงสรุปคะแนน)
   getRatingSummary: async (ctx: Context) => {
     try {
       const post_id = parseInt((ctx.params as any)?.postId ?? (ctx.params as any)?.id, 10);
