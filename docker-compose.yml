@@ -15,6 +15,20 @@ services:
     volumes:
       - mysql_maikamear:/var/lib/mysql
 
+  myadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: maikamear-admin
+    restart: always
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: maikamear
+      PMA_PASSWORD: 123456
+    ports:
+      - "8080:80"
+    depends_on:
+      - mysql
+
 volumes:
   mysql_maikamear:
 
