@@ -1,5 +1,4 @@
 version: '3.8'
-
 services:
   mysql:
     image: mysql:5.7
@@ -14,6 +13,8 @@ services:
       - "3388:3306"
     volumes:
       - mysql_maikamear:/var/lib/mysql
+    networks:
+      - maikamear-net
 
   myadmin:
     image: phpmyadmin/phpmyadmin
@@ -28,7 +29,12 @@ services:
       - "8080:80"
     depends_on:
       - mysql
+    networks:
+      - maikamear-net
 
 volumes:
   mysql_maikamear:
 
+networks:
+  maikamear-net:
+    external: true
