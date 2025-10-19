@@ -84,9 +84,10 @@ createComment: async (ctx: any): Promise<ApiResponse> => {
     const comment_text = formData.get("comment_text")?.toString()?.trim();
     const imageFile = formData.get("comment_image");
 
-    if (!post_id || !user_id || !comment_text) {
-      return createErrorResponse(400, "Missing required fields");
-    }
+    if (!post_id || !user_id || (!comment_text && !imageFile)) {
+  return createErrorResponse(400, "Missing required fields");
+}
+
 
     let image_path: string | null = null;
     if (
@@ -136,11 +137,12 @@ createComment: async (ctx: any): Promise<ApiResponse> => {
   },
 
 
-  //ลบคอมเมนต์ (และลบรูปออกจากโฟลเดอร์ด้วย)
-  deleteCommentById: async (ctx: any): Promise<ApiResponse> => {
+  // ลบคอมเมนต์ (และลบรูปออกจากโฟลเดอร์ด้วย)
+deleteCommentById: async (ctx: any): Promise<ApiResponse> => {
   try {
     const authHeader = ctx.headers?.authorization;
-    if (!authHeader) return createErrorResponse(401, "Missing authorization header");
+    if (!authHeader)
+      return createErrorResponse(401, "Missing authorization header");
 
     const token = authHeader.split(" ")[1] || authHeader;
     let decoded: any;
@@ -149,27 +151,37 @@ createComment: async (ctx: any): Promise<ApiResponse> => {
     } catch {
       return createErrorResponse(401, "Invalid token");
     }
+
     const currentUserId = decoded.userId;
+    const isAdmin = decoded.isAdmin === 1 || decoded.isAdmin === true; // ใช้ชื่อให้ตรงกับ token จริง
 
     const commentId = parseInt(ctx.params.id);
     const [rows]: any = await pool.query(
       `SELECT user_id, comment_image_path FROM comment WHERE comment_id = ?`,
       [commentId]
     );
+
     if (!rows.length) return createErrorResponse(404, "Comment not found");
-    if (rows[0].user_id !== currentUserId) {
+
+    //  ตรวจสิทธิ์: ถ้าไม่ใช่แอดมิน และไม่ใช่เจ้าของ → ห้ามลบ
+    if (!isAdmin && rows[0].user_id !== currentUserId) {
       return createErrorResponse(403, "You can only delete your own comments");
     }
 
+    //  ลบไฟล์ถ้ามี
     const imagePath = rows[0]?.comment_image_path;
     if (imagePath) await deleteCommentImage(imagePath);
+
+    //  ลบในฐานข้อมูล
     await pool.query(`DELETE FROM comment WHERE comment_id = ?`, [commentId]);
-    return createSuccessResponse(200, "Comment deleted");
+
+    return createSuccessResponse(200, "Comment deleted successfully");
   } catch (error) {
     console.error("Error deleting comment:", error);
     return createErrorResponse(500, "Internal server error");
   }
 },
+
 
   //แก้ไขข้อความคอมเมนต์ และรูปใหม่ (ถ้ามี)
   updateCommentById: async (ctx: any): Promise<ApiResponse> => {
