@@ -608,41 +608,58 @@ export const post_controller = {
       } catch {
         return createErrorResponse(401, "Invalid token");
       }
-      const userIdFromToken = decoded.userId;
 
+      const userIdFromToken = decoded.userId;
       const postId = parseInt(ctx.params.id);
       if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
 
-      // ✅ ตรวจสอบว่าโพสต์นี้เป็นของ user จริงไหม
+      // ตรวจสอบว่าโพสต์มีจริงไหม
       const [postRows]: any = await pool.query(
         `SELECT user_id FROM post WHERE post_id = ?`,
         [postId]
       );
       if (!postRows.length) return createErrorResponse(404, "Post not found");
-      if (postRows[0].user_id !== userIdFromToken) {
+
+      // ตรวจสอบสิทธิ์
+      const [userRows]: any = await pool.query(
+        `SELECT is_admin FROM user WHERE user_id = ?`,
+        [userIdFromToken]
+      );
+
+      if (!userRows.length)
+        return createErrorResponse(403, "User not found or inactive");
+
+      const isAdmin = userRows[0].is_admin === 1;
+      const isOwner = Number(postRows[0].user_id) === Number(userIdFromToken);
+
+      if (!isOwner && !isAdmin)
         return createErrorResponse(
           403,
           "You are not allowed to delete this post"
         );
-      }
 
+      // ✅ ลบไฟล์จริงก่อน
       const [images]: any = await pool.query(
         `SELECT post_image_path FROM post_image WHERE post_id = ?`,
         [postId]
       );
-
       const deleteFilePromises = images.map((image: any) =>
         deleteImageFile(image.post_image_path)
       );
       await Promise.all(deleteFilePromises);
 
+      // ✅ ลบข้อมูลในตารางลูกที่อ้างถึง post_id
+      await pool.query(`DELETE FROM comment WHERE post_id = ?`, [postId]);
+      await pool.query(`DELETE FROM post_rating WHERE post_id = ?`, [postId]);
       await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [postId]);
+
+      // ✅ ลบโพสต์หลัก
       await pool.query(`DELETE FROM post WHERE post_id = ?`, [postId]);
 
       return createSuccessResponse(200, "Post deleted successfully");
-    } catch (error) {
-      console.error("Error deleting post:", error);
-      return createErrorResponse(500, "Internal server error");
+    } catch (error: any) {
+      console.error("Error deleting post:", error.message || error);
+      return createErrorResponse(500, error.message || "Internal server error");
     }
   },
 
