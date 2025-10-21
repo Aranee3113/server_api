@@ -144,59 +144,69 @@ export const post_controller = {
         .trim();
       const videos = formData.getAll("video_files") || [];
 
-      console.log(formData);
+      if (!post_name || !post_description)
+        return createErrorResponse(400, "Missing required fields");
 
-      // if (!post_name || !post_description)
-      //   return createErrorResponse(400, "Missing required fields");
+      const user_id = decoded.userId;
+      const post_timestamp = format(new Date(), "yyyy-MM-dd HH:mm:ss");
 
-      // const user_id = decoded.userId;
-      // const post_timestamp = format(new Date(), "yyyy-MM-dd HH:mm:ss");
+      const hasVideo = videos.some((file: any) =>
+        file?.name?.toLowerCase().endsWith(".mp4")
+      );
 
-      // const hasVideo = videos.some((file: any) =>
-      //   file?.name?.toLowerCase().endsWith(".mp4")
-      // );
+      const [result]: any = await pool.query(
+        `INSERT INTO post (post_name, post_description, post_timestamp, user_id, is_active, is_video)
+         VALUES (?, ?, ?, ?, 0, ?)`,
+        [
+          post_name,
+          post_description,
+          post_timestamp,
+          user_id,
+          hasVideo ? 1 : null,
+        ]
+      );
 
-      // const [result]: any = await pool.query(
-      //   `INSERT INTO post (post_name, post_description, post_timestamp, user_id, is_active, is_video)
-      //    VALUES (?, ?, ?, ?, 0, ?)`,
-      //   [post_name, post_description, post_timestamp, user_id, hasVideo ? 1 : null]
-      // );
+      const postId = result.insertId;
+      const videoData: any[] = [];
 
-      // const postId = result.insertId;
-      // const videoData: any[] = [];
+      for (const file of videos) {
+        // @ts-ignore
+        if (!file || typeof file.arrayBuffer !== "function") continue;
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const ext = path.extname(file.name).toLowerCase();
+        if (ext !== ".mp4") continue;
 
-      // for (const file of videos) {
-      //   // @ts-ignore
-      //   if (!file || typeof file.arrayBuffer !== "function") continue;
-      //   const buffer = Buffer.from(await file.arrayBuffer());
-      //   const ext = path.extname(file.name).toLowerCase();
-      //   if (ext !== ".mp4") continue;
+        const filename = `${uuidv4()}${ext}`;
+        const filepath = path.join(
+          process.cwd(),
+          "public",
+          "uploads",
+          "videos",
+          filename
+        );
+        await writeFile(filepath, buffer);
 
-      //   const filename = `${uuidv4()}${ext}`;
-      //   const filepath = path.join(process.cwd(), "public", "uploads", "videos", filename);
-      //   await writeFile(filepath, buffer);
+        const filepathForDB = "/uploads/videos/" + filename;
+        const [insertVideo]: any = await pool.query(
+          `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
+          [postId, filepathForDB]
+        );
 
-      //   const filepathForDB = "/uploads/videos/" + filename;
-      //   const [insertVideo]: any = await pool.query(
-      //     `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
-      //     [postId, filepathForDB]
-      //   );
+        videoData.push({
+          post_image_id: insertVideo.insertId,
+          post_image_path: filepathForDB,
+        });
+      }
 
-      //   videoData.push({
-      //     post_image_id: insertVideo.insertId,
-      //     post_image_path: filepathForDB,
-      //   });
-      // }
-
-      // return createSuccessResponse(201, "Video created successfully", {
-      //   post_id: postId,
-      //   post_name,
-      //   post_description,
-      //   post_timestamp,
-      //   user_id,
-      //   is_video: hasVideo ? 1 : null,
-      //   videos: videoData,
-      // });
+      return createSuccessResponse(201, "Video created successfully", {
+        post_id: postId,
+        post_name,
+        post_description,
+        post_timestamp,
+        user_id,
+        is_video: hasVideo ? 1 : null,
+        videos: videoData,
+      });
     } catch (error) {
       console.error("Error creating video:", error);
       return createErrorResponse(500, "Internal server error");
@@ -206,23 +216,64 @@ export const post_controller = {
   updatevideoById: async (ctx: any): Promise<ApiResponse> => {
     try {
       const { id } = ctx.params;
+      if (!id) return createErrorResponse(400, "Missing video ID");
+
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+
       const formData = await ctx.request.formData();
       const post_name = formData.get("post_name")?.toString().trim();
       const post_description = formData
         .get("post_description")
         ?.toString()
         .trim();
-      const newVideos = formData.getAll("videos_files") || [];
+      const videos = formData.getAll("video_files") || [];
 
-      let hasVideo = false;
-      const updatedVideos: any[] = [];
+      if (!post_name && !post_description && videos.length === 0)
+        return createErrorResponse(400, "No data to update");
 
-      for (const file of newVideos) {
-        if (file?.name?.toLowerCase().endsWith(".mp4")) {
-          hasVideo = true;
+      const post_timestamp = format(new Date(), "yyyy-MM-dd HH:mm:ss");
 
+      // ดึงวิดีโอเดิมจาก DB เพื่อลบถ้ามีการอัปโหลดใหม่
+      const [oldVideos]: any = await pool.query(
+        `SELECT post_image_id, post_image_path FROM post_image WHERE post_id = ?`,
+        [id]
+      );
+
+      // ถ้ามีไฟล์ใหม่ให้แทนที่
+      const newVideoData: any[] = [];
+      if (videos.length > 0) {
+        // ลบไฟล์เก่า
+        for (const old of oldVideos) {
+          const oldPath = path.join(
+            process.cwd(),
+            "public",
+            old.post_image_path
+          );
+          await unlink(oldPath).catch(() => {});
+          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [
+            old.post_image_id,
+          ]);
+        }
+
+        // เพิ่มไฟล์ใหม่
+        for (const file of videos) {
+          // @ts-ignore
+          if (!file || typeof file.arrayBuffer !== "function") continue;
           const buffer = Buffer.from(await file.arrayBuffer());
-          const filename = `${uuidv4()}.mp4`;
+          const ext = path.extname(file.name || "video.mp4").toLowerCase();
+          if (ext !== ".mp4") continue;
+
+          const filename = `${uuidv4()}${ext}`;
           const filepath = path.join(
             process.cwd(),
             "public",
@@ -231,48 +282,43 @@ export const post_controller = {
             filename
           );
           await writeFile(filepath, buffer);
+
           const filepathForDB = "/uploads/videos/" + filename;
-
-          // ลบไฟล์เก่าก่อน
-          const [old]: any = await pool.query(
-            `SELECT post_image_path FROM post_image WHERE post_id = ?`,
-            [id]
-          );
-          for (const o of old) {
-            const oldPath = path.join(
-              process.cwd(),
-              "public",
-              o.post_image_path
-            );
-            await unlink(oldPath).catch(() => {});
-          }
-
-          await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [id]);
-
-          // เพิ่มวิดีโอใหม่
-          const [insert]: any = await pool.query(
+          const [insertVideo]: any = await pool.query(
             `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
             [id, filepathForDB]
           );
 
-          updatedVideos.push({
-            post_image_id: insert.insertId,
+          newVideoData.push({
+            post_image_id: insertVideo.insertId,
             post_image_path: filepathForDB,
           });
         }
-      }
 
-      await pool.query(
-        `UPDATE post SET post_name = ?, post_description = ?, is_video = ? WHERE post_id = ?`,
-        [post_name, post_description, hasVideo ? 1 : null, id]
-      );
+        // มีไฟล์ใหม่ → อัปเดตให้เป็นวิดีโอแน่นอน
+        await pool.query(
+          `UPDATE post 
+         SET post_name = ?, post_description = ?, post_timestamp = ?, is_video = 1 
+         WHERE post_id = ?`,
+          [post_name, post_description, post_timestamp, id]
+        );
+      } else {
+        // ไม่มีไฟล์ใหม่ → อัปเดตเฉพาะข้อความ
+        await pool.query(
+          `UPDATE post 
+         SET post_name = ?, post_description = ?, post_timestamp = ?
+         WHERE post_id = ?`,
+          [post_name, post_description, post_timestamp, id]
+        );
+      }
 
       return createSuccessResponse(200, "Video updated successfully", {
         post_id: id,
         post_name,
         post_description,
-        is_video: hasVideo ? 1 : null,
-        videos: updatedVideos,
+        post_timestamp,
+        is_video: videos.length > 0 ? 1 : null,
+        videos: newVideoData,
       });
     } catch (error) {
       console.error("Error updating video:", error);
