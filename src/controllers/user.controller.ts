@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import { writeFile, unlink, mkdir } from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
+import { jwtDecode } from "jwt-decode";
 
 const generateUniqueFilename = (originalName: string): string => {
   const ext = path.extname(originalName);
@@ -29,6 +30,30 @@ const deleteUserImage = async (imagePath: string): Promise<void> => {
   const fullPath = path.join(process.cwd(), "public", imagePath);
   await unlink(fullPath).catch(() => {});
 };
+
+interface ApiResponse<T = any> {
+  status: number;
+  success: boolean;
+  message: string;
+  data?: T;
+}
+
+const createErrorResponse = (status: number, message: string): ApiResponse => ({
+  status,
+  success: false,
+  message,
+});
+
+const createSuccessResponse = (
+  status: number,
+  message: string,
+  data?: any
+): ApiResponse => ({
+  status,
+  success: true,
+  message,
+  ...(data && { data }),
+});
 
 export const user_controller = {
   // ดึงผู้ใช้ทั้งหมด
@@ -59,10 +84,13 @@ export const user_controller = {
   getUserById: async (ctx: any) => {
     const userId = ctx.params.id;
     try {
-      const [rows]: any = await pool.query(`
+      const [rows]: any = await pool.query(
+        `
         SELECT user_id, user_name, user_username, is_admin, user_image_path
         FROM user WHERE user_id = ?
-      `, [userId]);
+      `,
+        [userId]
+      );
 
       if (!rows || rows.length === 0) {
         return {
@@ -108,10 +136,13 @@ export const user_controller = {
       const hashedPassword = await bcrypt.hash(user_password, 10);
       const imagePath = await saveUserImage(user_image);
 
-      const [result]: any = await pool.query(`
+      const [result]: any = await pool.query(
+        `
         INSERT INTO user (user_name, user_username, user_password, is_admin, user_image_path)
         VALUES (?, ?, ?, 0, ?)
-      `, [user_name, user_username, hashedPassword, imagePath]);
+      `,
+        [user_name, user_username, hashedPassword, imagePath]
+      );
 
       const user_id = result.insertId;
 
@@ -209,41 +240,66 @@ export const user_controller = {
 
   // ลบผู้ใช้ + ลบไฟล์รูปภาพ
   deleteUserById: async (ctx: any) => {
-    const userId = ctx.params.id;
     try {
-      const [rows]: any = await pool.query(
-        `SELECT user_image_path FROM user WHERE user_id = ?`,
-        [userId]
-      );
-      const imagePath = rows[0]?.user_image_path;
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
 
-      if (imagePath) await deleteUserImage(imagePath);
-
-      const [result]: any = await pool.query(
-        `DELETE FROM user WHERE user_id = ?`,
-        [userId]
-      );
-
-      if (result.affectedRows === 0) {
-        return {
-          status: 404,
-          success: false,
-          message: "User not found",
-        };
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
       }
 
-      return {
-        status: 200,
-        success: true,
-        message: "User deleted successfully",
-      };
-    } catch (err) {
-      console.error(err);
-      return {
-        status: 500,
-        success: false,
-        message: "Internal server error",
-      };
+      const userIdFromToken = decoded.userId;
+      const targetUserId = parseInt(ctx.params.id);
+      if (isNaN(targetUserId))
+        return createErrorResponse(400, "Invalid user ID");
+
+      // ✅ ตรวจสอบว่า user มีอยู่จริงไหม
+      const [userRows]: any = await pool.query(
+        `SELECT user_id, is_admin, user_image_path FROM user WHERE user_id = ?`,
+        [targetUserId]
+      );
+      if (!userRows.length) return createErrorResponse(404, "User not found");
+
+      const [requesterRows]: any = await pool.query(
+        `SELECT is_admin FROM user WHERE user_id = ?`,
+        [userIdFromToken]
+      );
+      if (!requesterRows.length)
+        return createErrorResponse(403, "Requester not found or inactive");
+
+      const isAdmin = requesterRows[0].is_admin === 1;
+      const isSelf = Number(userIdFromToken) === Number(targetUserId);
+
+      // ✅ ตรวจสิทธิ์: ตัวเองลบตัวเองได้ / admin ลบใครก็ได้
+      if (!isAdmin && !isSelf)
+        return createErrorResponse(
+          403,
+          "You are not allowed to delete this user"
+        );
+
+      // ✅ ดึงข้อมูลภาพของ user เพื่อทำการลบไฟล์จริง
+      const userImagePath = userRows[0]?.user_image_path;
+      if (userImagePath) await deleteUserImage(userImagePath);
+
+      // ✅ ลบข้อมูลในตารางลูกที่อ้างถึง user_id (เช่น post, comment, rating)
+      await pool.query(`DELETE FROM comment WHERE user_id = ?`, [targetUserId]);
+      await pool.query(`DELETE FROM post_rating WHERE user_id = ?`, [
+        targetUserId,
+      ]);
+      await pool.query(`DELETE FROM post WHERE user_id = ?`, [targetUserId]);
+
+      // ✅ ลบ user หลัก
+      await pool.query(`DELETE FROM user WHERE user_id = ?`, [targetUserId]);
+
+      return createSuccessResponse(200, "User deleted successfully");
+    } catch (error: any) {
+      console.error("Error deleting user:", error.message || error);
+      return createErrorResponse(500, error.message || "Internal server error");
     }
   },
 };

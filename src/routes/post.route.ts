@@ -12,4 +12,10 @@ export const postRoutes = new Elysia({ prefix: "/post" })
   .post("/", post_controller.createpost)                    // POST /post
   .put("/:id", post_controller.updatepostById)              // PUT /post/:id
   .delete("/:id", post_controller.deletepostById)           // DELETE /post/:id
-  .get("/:id", post_controller.getpostById);                // GET /post/:id
+  .get("/:id", post_controller.getpostById)                // GET /post/:id
+
+
+  .get("/video", post_controller.getvideo)
+  .post("/video", post_controller.createvideo)
+  .put("/video/:id", post_controller.updatevideoById)
+  .delete("/video/:id", post_controller.deletevideoById)

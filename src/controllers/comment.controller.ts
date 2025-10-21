@@ -58,63 +58,61 @@ const deleteCommentImage = async (imagePath: string): Promise<void> => {
   await unlink(absPath).catch(() => {}); // เงียบทิ้งถ้าไฟล์ไม่มี
 };
 
-
 export const comment_controller = {
   //เพิ่มคอมเมนต์ใหม่
-createComment: async (ctx: any): Promise<ApiResponse> => {
-  try {
-    const authHeader = ctx.headers?.authorization;
-    if (!authHeader) {
-      return createErrorResponse(401, "Missing authorization header");
-    }
-
-    const parts = authHeader.split(" ");
-    const token = parts.length === 2 ? parts[1] : parts[0];
-
-    let decoded: any;
+  createComment: async (ctx: any): Promise<ApiResponse> => {
     try {
-      decoded = jwtDecode(token);
-    } catch {
-      return createErrorResponse(401, "Invalid token");
-    }
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader) {
+        return createErrorResponse(401, "Missing authorization header");
+      }
 
-    const formData = await ctx.request.formData();
-    const post_id = parseInt(formData.get("post_id")?.toString() || "");
-    const user_id = decoded.userId;
-    const comment_text = formData.get("comment_text")?.toString()?.trim();
-    const imageFile = formData.get("comment_image");
+      const parts = authHeader.split(" ");
+      const token = parts.length === 2 ? parts[1] : parts[0];
 
-    if (!post_id || !user_id || (!comment_text && !imageFile)) {
-  return createErrorResponse(400, "Missing required fields");
-}
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
 
+      const formData = await ctx.request.formData();
+      const post_id = parseInt(formData.get("post_id")?.toString() || "");
+      const user_id = decoded.userId;
+      const comment_text = formData.get("comment_text")?.toString()?.trim();
+      const imageFile = formData.get("comment_image");
 
-    let image_path: string | null = null;
-    if (
-      imageFile &&
-      typeof imageFile !== "string" &&
-      typeof (imageFile as any).arrayBuffer === "function"
-    ) {
-      image_path = await saveCommentImage(imageFile);
-    }
+      if (!post_id || !user_id || (!comment_text && !imageFile)) {
+        return createErrorResponse(400, "Missing required fields");
+      }
 
-    await pool.query(
-      `INSERT INTO comment (post_id, user_id, comment_text, comment_image_path)
+      let image_path: string | null = null;
+      if (
+        imageFile &&
+        typeof imageFile !== "string" &&
+        typeof (imageFile as any).arrayBuffer === "function"
+      ) {
+        image_path = await saveCommentImage(imageFile);
+      }
+
+      await pool.query(
+        `INSERT INTO comment (post_id, user_id, comment_text, comment_image_path)
        VALUES (?, ?, ?, ?)`,
-      [post_id, user_id, comment_text, image_path]
-    );
+        [post_id, user_id, comment_text, image_path]
+      );
 
-    return createSuccessResponse(201, "Comment created successfully", {
-      post_id,
-      user_id,
-      comment_text,
-      comment_image_path: image_path,
-    });
-  } catch (error) {
-    console.error("Error creating comment:", error);
-    return createErrorResponse(500, "Internal server error");
-  }
-},
+      return createSuccessResponse(201, "Comment created successfully", {
+        post_id,
+        user_id,
+        comment_text,
+        comment_image_path: image_path,
+      });
+    } catch (error) {
+      console.error("Error creating comment:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
 
   //แสดงคอมเมนต์ทั้งหมด
   getAllComments: async (): Promise<ApiResponse> => {
@@ -136,122 +134,143 @@ createComment: async (ctx: any): Promise<ApiResponse> => {
     }
   },
 
-
   // ลบคอมเมนต์ (และลบรูปออกจากโฟลเดอร์ด้วย)
-deleteCommentById: async (ctx: any): Promise<ApiResponse> => {
-  try {
-    const authHeader = ctx.headers?.authorization;
-    if (!authHeader)
-      return createErrorResponse(401, "Missing authorization header");
-
-    const token = authHeader.split(" ")[1] || authHeader;
-    let decoded: any;
+  deleteCommentById: async (ctx: any): Promise<ApiResponse> => {
     try {
-      decoded = jwtDecode(token);
-    } catch {
-      return createErrorResponse(401, "Invalid token");
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
+
+      const token = authHeader.split(" ")[1] || authHeader;
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+
+      const currentUserId = decoded.userId;
+
+      // ✅ ดึงข้อมูล user เพื่อตรวจสิทธิ์ว่าเป็น admin หรือไม่
+      const [userRows]: any = await pool.query(
+        `SELECT is_admin FROM user WHERE user_id = ?`,
+        [currentUserId]
+      );
+      if (!userRows.length)
+        return createErrorResponse(403, "User not found or inactive");
+
+      const isAdmin = userRows[0].is_admin === 1;
+
+      // ✅ ดึงข้อมูลคอมเมนต์
+      const commentId = parseInt(ctx.params.id);
+      if (isNaN(commentId))
+        return createErrorResponse(400, "Invalid comment ID");
+
+      const [rows]: any = await pool.query(
+        `SELECT user_id, comment_image_path FROM comment WHERE comment_id = ?`,
+        [commentId]
+      );
+
+      if (!rows.length) return createErrorResponse(404, "Comment not found");
+
+      const commentOwnerId = Number(rows[0].user_id);
+
+      // ✅ ตรวจสิทธิ์: เจ้าของลบได้เอง, แอดมินลบได้ทั้งหมด
+      if (!isAdmin && commentOwnerId !== Number(currentUserId)) {
+        return createErrorResponse(
+          403,
+          "You are not allowed to delete this comment"
+        );
+      }
+
+      // ✅ ลบไฟล์ภาพจริง (ถ้ามี)
+      const imagePath = rows[0]?.comment_image_path;
+      if (imagePath) await deleteCommentImage(imagePath);
+
+      // ✅ ลบคอมเมนต์จากฐานข้อมูล
+      await pool.query(`DELETE FROM comment WHERE comment_id = ?`, [commentId]);
+
+      return createSuccessResponse(200, "Comment deleted successfully");
+    } catch (error: any) {
+      console.error("Error deleting comment:", error);
+      return createErrorResponse(500, error.message || "Internal server error");
     }
-
-    const currentUserId = decoded.userId;
-    const isAdmin = decoded.isAdmin === 1 || decoded.isAdmin === true; // ใช้ชื่อให้ตรงกับ token จริง
-
-    const commentId = parseInt(ctx.params.id);
-    const [rows]: any = await pool.query(
-      `SELECT user_id, comment_image_path FROM comment WHERE comment_id = ?`,
-      [commentId]
-    );
-
-    if (!rows.length) return createErrorResponse(404, "Comment not found");
-
-    //  ตรวจสิทธิ์: ถ้าไม่ใช่แอดมิน และไม่ใช่เจ้าของ → ห้ามลบ
-    if (!isAdmin && rows[0].user_id !== currentUserId) {
-      return createErrorResponse(403, "You can only delete your own comments");
-    }
-
-    //  ลบไฟล์ถ้ามี
-    const imagePath = rows[0]?.comment_image_path;
-    if (imagePath) await deleteCommentImage(imagePath);
-
-    //  ลบในฐานข้อมูล
-    await pool.query(`DELETE FROM comment WHERE comment_id = ?`, [commentId]);
-
-    return createSuccessResponse(200, "Comment deleted successfully");
-  } catch (error) {
-    console.error("Error deleting comment:", error);
-    return createErrorResponse(500, "Internal server error");
-  }
-},
-
+  },
 
   //แก้ไขข้อความคอมเมนต์ และรูปใหม่ (ถ้ามี)
   updateCommentById: async (ctx: any): Promise<ApiResponse> => {
-  try {
-    const authHeader = ctx.headers?.authorization;
-    if (!authHeader) return createErrorResponse(401, "Missing authorization header");
-
-    const token = authHeader.split(" ")[1] || authHeader;
-    let decoded: any;
     try {
-      decoded = jwtDecode(token);
-    } catch {
-      return createErrorResponse(401, "Invalid token");
-    }
-    const currentUserId = decoded.userId;
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
 
-    const commentId = parseInt(ctx.params.id);
+      const token = authHeader.split(" ")[1] || authHeader;
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+      const currentUserId = decoded.userId;
 
-    // ตรวจสอบว่าเป็นเจ้าของคอมเมนต์
-    const [rows]: any = await pool.query(
-      `SELECT user_id, comment_image_path FROM comment WHERE comment_id = ?`,
-      [commentId]
-    );
-    if (!rows.length) return createErrorResponse(404, "Comment not found");
-    if (rows[0].user_id !== currentUserId) {
-      return createErrorResponse(403, "You can only edit your own comments");
-    }
+      const commentId = parseInt(ctx.params.id);
 
-    const oldImage = rows[0]?.comment_image_path as string | null;
-
-    const formData = await ctx.request.formData();
-    const comment_text = formData.get("comment_text")?.toString() ?? "";
-    const removeImageFlag =
-      (formData.get("remove_image")?.toString() || "") === "1";
-    const imageFile = formData.get("comment_image") as any | null;
-
-    let newImagePath: string | null = null;
-
-    // ถ้ามีไฟล์ใหม่ → ลบรูปเก่า แล้วบันทึกไฟล์ใหม่
-    if (imageFile && typeof imageFile !== "string" && typeof imageFile.arrayBuffer === "function") {
-      if (oldImage) await deleteCommentImage(oldImage);
-      newImagePath = await saveCommentImage(imageFile);
-    } else if (removeImageFlag) {
-      // ถ้าระบุให้ลบภาพ → ลบรูปเก่า แล้ว set เป็น NULL
-      if (oldImage) await deleteCommentImage(oldImage);
-      newImagePath = null;
-    }
-
-    // สร้าง SQL ตามเคส
-    if (imageFile && newImagePath) {
-      await pool.query(
-        `UPDATE comment SET comment_text = ?, comment_image_path = ? WHERE comment_id = ?`,
-        [comment_text, newImagePath, commentId]
+      // ตรวจสอบว่าเป็นเจ้าของคอมเมนต์
+      const [rows]: any = await pool.query(
+        `SELECT user_id, comment_image_path FROM comment WHERE comment_id = ?`,
+        [commentId]
       );
-    } else if (removeImageFlag) {
-      await pool.query(
-        `UPDATE comment SET comment_text = ?, comment_image_path = NULL WHERE comment_id = ?`,
-        [comment_text, commentId]
-      );
-    } else {
-      await pool.query(
-        `UPDATE comment SET comment_text = ? WHERE comment_id = ?`,
-        [comment_text, commentId]
-      );
-    }
+      if (!rows.length) return createErrorResponse(404, "Comment not found");
+      if (rows[0].user_id !== currentUserId) {
+        return createErrorResponse(403, "You can only edit your own comments");
+      }
 
-    return createSuccessResponse(200, "Comment updated");
-  } catch (error) {
-    console.error("Error updating comment:", error);
-    return createErrorResponse(500, "Internal server error");
-  }
-},
+      const oldImage = rows[0]?.comment_image_path as string | null;
+
+      const formData = await ctx.request.formData();
+      const comment_text = formData.get("comment_text")?.toString() ?? "";
+      const removeImageFlag =
+        (formData.get("remove_image")?.toString() || "") === "1";
+      const imageFile = formData.get("comment_image") as any | null;
+
+      let newImagePath: string | null = null;
+
+      // ถ้ามีไฟล์ใหม่ → ลบรูปเก่า แล้วบันทึกไฟล์ใหม่
+      if (
+        imageFile &&
+        typeof imageFile !== "string" &&
+        typeof imageFile.arrayBuffer === "function"
+      ) {
+        if (oldImage) await deleteCommentImage(oldImage);
+        newImagePath = await saveCommentImage(imageFile);
+      } else if (removeImageFlag) {
+        // ถ้าระบุให้ลบภาพ → ลบรูปเก่า แล้ว set เป็น NULL
+        if (oldImage) await deleteCommentImage(oldImage);
+        newImagePath = null;
+      }
+
+      // สร้าง SQL ตามเคส
+      if (imageFile && newImagePath) {
+        await pool.query(
+          `UPDATE comment SET comment_text = ?, comment_image_path = ? WHERE comment_id = ?`,
+          [comment_text, newImagePath, commentId]
+        );
+      } else if (removeImageFlag) {
+        await pool.query(
+          `UPDATE comment SET comment_text = ?, comment_image_path = NULL WHERE comment_id = ?`,
+          [comment_text, commentId]
+        );
+      } else {
+        await pool.query(
+          `UPDATE comment SET comment_text = ? WHERE comment_id = ?`,
+          [comment_text, commentId]
+        );
+      }
+
+      return createSuccessResponse(200, "Comment updated");
+    } catch (error) {
+      console.error("Error updating comment:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
 };
