@@ -15,6 +15,7 @@ interface PostData {
   images?: Array<{
     post_image_id: number;
     post_image_path: string;
+    post_image_description?: string | null;
   }>;
 }
 
@@ -56,9 +57,15 @@ const createSuccessResponse = (
 
 const saveImageFile = async (
   file: any,
-  postId: number
-): Promise<{ post_image_id: number; post_image_path: string } | null> => {
+  postId: number,
+  description?: string | null
+): Promise<{
+  post_image_id: number;
+  post_image_path: string;
+  post_image_description?: string | null;
+} | null> => {
   if (!file || !file.name || !file.size) return null;
+
   const buffer = Buffer.from(await file.arrayBuffer());
   const filename = generateUniqueFilename(file.name);
   const filepath = path.join(
@@ -68,15 +75,21 @@ const saveImageFile = async (
     "post",
     filename
   );
+
   await writeFile(filepath, buffer);
+
   const filename_insert = "/uploads/post/" + filename;
+
   const [result]: any = await pool.query(
-    `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
-    [postId, filename_insert]
+    `INSERT INTO post_image (post_id, post_image_path, post_image_description)
+     VALUES (?, ?, ?)`,
+    [postId, filename_insert, description || null]
   );
+
   return {
     post_image_id: result.insertId,
     post_image_path: filename_insert,
+    post_image_description: description || null,
   };
 };
 
@@ -86,22 +99,34 @@ const deleteImageFile = async (imagePath: string): Promise<void> => {
 };
 
 export const post_controller = {
-  getvideo: async (_ctx: any) => {
+  getvideo: async (_ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
-          SELECT
-            post.post_id,
-            post.post_name,
-            post.post_description,
-            post.post_timestamp,
-            post_image.post_image_id,
-            post_image.post_image_path,
-            post.is_video
-          FROM post
-          INNER JOIN post_image ON post.post_id = post_image.post_id
-          WHERE post.is_video = 1
-          ORDER BY post.post_timestamp DESC
-        `;
+      SELECT
+        p.post_id,
+        p.post_name,
+        p.post_description,
+        p.post_timestamp,
+        p.is_video,
+        u.user_id,
+        u.user_name,
+        u.user_username,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'post_image_id', i.post_image_id,
+              'post_image_path', i.post_image_path,
+              'post_image_description', i.post_image_description  -- ✅ เพิ่มคำอธิบายภาพ/วิดีโอ
+            )
+          )
+          FROM post_image i
+          WHERE i.post_id = p.post_id
+        ) AS images
+      FROM post p
+      INNER JOIN user u ON u.user_id = p.user_id
+      WHERE p.is_video = 1
+      ORDER BY p.post_timestamp DESC
+    `;
 
       const [rows]: any = await pool.query(sql);
 
@@ -237,22 +262,23 @@ export const post_controller = {
         ?.toString()
         .trim();
       const videos = formData.getAll("video_files") || [];
+      const videoDescriptions = formData.getAll("video_descriptions") || []; // ✅ เพิ่มฟิลด์คำอธิบายวิดีโอ
 
       if (!post_name && !post_description && videos.length === 0)
         return createErrorResponse(400, "No data to update");
 
       const post_timestamp = format(new Date(), "yyyy-MM-dd HH:mm:ss");
 
-      // ดึงวิดีโอเดิมจาก DB เพื่อลบถ้ามีการอัปโหลดใหม่
+      // ✅ ดึงวิดีโอเดิมจาก DB เพื่อลบถ้ามีการอัปโหลดใหม่
       const [oldVideos]: any = await pool.query(
         `SELECT post_image_id, post_image_path FROM post_image WHERE post_id = ?`,
         [id]
       );
 
-      // ถ้ามีไฟล์ใหม่ให้แทนที่
       const newVideoData: any[] = [];
+
       if (videos.length > 0) {
-        // ลบไฟล์เก่า
+        // ✅ ลบไฟล์วิดีโอเก่าทั้งหมด
         for (const old of oldVideos) {
           const oldPath = path.join(
             process.cwd(),
@@ -265,10 +291,14 @@ export const post_controller = {
           ]);
         }
 
-        // เพิ่มไฟล์ใหม่
-        for (const file of videos) {
+        // ✅ เพิ่มไฟล์ใหม่พร้อมคำอธิบาย
+        for (let i = 0; i < videos.length; i++) {
+          const file = videos[i];
+          const desc = videoDescriptions[i]?.toString().trim() || null;
+
           // @ts-ignore
           if (!file || typeof file.arrayBuffer !== "function") continue;
+
           const buffer = Buffer.from(await file.arrayBuffer());
           const ext = path.extname(file.name || "video.mp4").toLowerCase();
           if (ext !== ".mp4") continue;
@@ -284,18 +314,21 @@ export const post_controller = {
           await writeFile(filepath, buffer);
 
           const filepathForDB = "/uploads/videos/" + filename;
+
           const [insertVideo]: any = await pool.query(
-            `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
-            [id, filepathForDB]
+            `INSERT INTO post_image (post_id, post_image_path, post_image_description)
+           VALUES (?, ?, ?)`,
+            [id, filepathForDB, desc]
           );
 
           newVideoData.push({
             post_image_id: insertVideo.insertId,
             post_image_path: filepathForDB,
+            post_image_description: desc,
           });
         }
 
-        // มีไฟล์ใหม่ → อัปเดตให้เป็นวิดีโอแน่นอน
+        // ✅ มีวิดีโอใหม่ → ตั้งค่า is_video = 1
         await pool.query(
           `UPDATE post 
          SET post_name = ?, post_description = ?, post_timestamp = ?, is_video = 1 
@@ -303,10 +336,10 @@ export const post_controller = {
           [post_name, post_description, post_timestamp, id]
         );
       } else {
-        // ไม่มีไฟล์ใหม่ → อัปเดตเฉพาะข้อความ
+        // ✅ ไม่มีไฟล์ใหม่ → แก้ไขเฉพาะชื่อและคำอธิบายโพสต์
         await pool.query(
           `UPDATE post 
-         SET post_name = ?, post_description = ?, post_timestamp = ?
+         SET post_name = ?, post_description = ?, post_timestamp = ? 
          WHERE post_id = ?`,
           [post_name, post_description, post_timestamp, id]
         );
@@ -330,23 +363,67 @@ export const post_controller = {
     try {
       const { id } = ctx.params;
 
+      // ✅ ตรวจสอบ token
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+
+      const userIdFromToken = decoded.userId;
+
+      // ✅ ตรวจสอบว่าโพสต์มีอยู่ไหม
+      const [postRows]: any = await pool.query(
+        `SELECT user_id FROM post WHERE post_id = ? AND is_video = 1`,
+        [id]
+      );
+      if (!postRows.length)
+        return createErrorResponse(404, "Video post not found");
+
+      // ✅ ตรวจสอบสิทธิ์ (เฉพาะเจ้าของหรือแอดมิน)
+      const [userRows]: any = await pool.query(
+        `SELECT is_admin FROM user WHERE user_id = ?`,
+        [userIdFromToken]
+      );
+
+      if (!userRows.length)
+        return createErrorResponse(403, "User not found or inactive");
+
+      const isAdmin = userRows[0].is_admin === 1;
+      const isOwner = Number(postRows[0].user_id) === Number(userIdFromToken);
+      if (!isOwner && !isAdmin)
+        return createErrorResponse(
+          403,
+          "You are not allowed to delete this video"
+        );
+
+      // ✅ ดึง path ของวิดีโอทั้งหมด
       const [videos]: any = await pool.query(
         `SELECT post_image_path FROM post_image WHERE post_id = ?`,
         [id]
       );
 
-      // ลบไฟล์จริง
+      // ✅ ลบไฟล์จริงจากโฟลเดอร์
       for (const v of videos) {
         const fullPath = path.join(process.cwd(), "public", v.post_image_path);
         await unlink(fullPath).catch(() => {});
       }
 
+      // ✅ ลบข้อมูลที่เกี่ยวข้องในฐานข้อมูล
+      await pool.query(`DELETE FROM comment WHERE post_id = ?`, [id]);
+      await pool.query(`DELETE FROM post_rating WHERE post_id = ?`, [id]);
       await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [id]);
       await pool.query(`DELETE FROM post WHERE post_id = ?`, [id]);
 
       return createSuccessResponse(200, "Video deleted successfully");
-    } catch (error) {
-      console.error("Error deleting video:", error);
+    } catch (error: any) {
+      console.error("Error deleting video:", error.message || error);
       return createErrorResponse(500, "Internal server error");
     }
   },
@@ -377,8 +454,10 @@ export const post_controller = {
         return createErrorResponse(400, "Missing required fields");
       }
 
-      const user_id = decoded.userId; // ✅ ใช้จาก token เท่านั้น
+      const user_id = decoded.userId;
       const images = formData.getAll("post_images") || [];
+      const imageDescriptions =
+        formData.getAll("post_image_descriptions") || []; // ✅ เพิ่มบรรทัดนี้
       const post_timestamp = formatTimestamp();
 
       const [result]: any = await pool.query(
@@ -390,7 +469,11 @@ export const post_controller = {
       const postId = result.insertId;
       const imageData: any[] = [];
 
-      for (const file of images) {
+      // ✅ วนลูปทั้งภาพและคำอธิบายพร้อมกัน
+      for (let i = 0; i < images.length; i++) {
+        const file = images[i];
+        const desc = imageDescriptions[i]?.toString().trim() || null;
+
         // @ts-ignore
         if (
           !file ||
@@ -398,7 +481,8 @@ export const post_controller = {
           typeof file.arrayBuffer !== "function"
         )
           continue;
-        const image = await saveImageFile(file, postId);
+
+        const image = await saveImageFile(file, postId, desc); // ✅ ส่ง desc ไปด้วย
         if (image) imageData.push(image);
       }
 
@@ -420,41 +504,42 @@ export const post_controller = {
   getAllposts: async (ctx: any): Promise<ApiResponse> => {
     try {
       const sql = `
-        SELECT 
-          p.post_id, 
-          p.post_name, 
-          p.post_description, 
-          p.post_timestamp, 
-          p.user_id, 
-          p.is_active,
-          (
-            SELECT JSON_ARRAYAGG(
-              JSON_OBJECT(
-                'post_image_id', i.post_image_id,
-                'post_image_path', i.post_image_path
-              )
+      SELECT 
+        p.post_id, 
+        p.post_name, 
+        p.post_description, 
+        p.post_timestamp, 
+        p.user_id, 
+        p.is_active,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'post_image_id', i.post_image_id,
+              'post_image_path', i.post_image_path,
+              'post_image_description', i.post_image_description
             )
-            FROM post_image i
-            WHERE i.post_id = p.post_id
-          ) AS images,
-          (
-            SELECT JSON_ARRAYAGG(
-              JSON_OBJECT(
-                'comment_id', c.comment_id,
-                'comment_text', c.comment_text,
-                'comment_image_path', c.comment_image_path,
-                'comment_timestamp', c.comment_timestamp,
-                'user_id', u.user_id,
-                'user_name', u.user_name
-              )
+          )
+          FROM post_image i
+          WHERE i.post_id = p.post_id
+        ) AS images,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'comment_id', c.comment_id,
+              'comment_text', c.comment_text,
+              'comment_image_path', c.comment_image_path,
+              'comment_timestamp', c.comment_timestamp,
+              'user_id', u.user_id,
+              'user_name', u.user_name
             )
-            FROM comment c
-            JOIN user u ON u.user_id = c.user_id
-            WHERE c.post_id = p.post_id 
-          ) AS comments
-        FROM post p
-        ORDER BY p.post_timestamp DESC
-      `;
+          )
+          FROM comment c
+          JOIN user u ON u.user_id = c.user_id
+          WHERE c.post_id = p.post_id 
+        ) AS comments
+      FROM post p
+      ORDER BY p.post_timestamp DESC
+    `;
 
       const [rows]: any = await pool.query(sql);
 
@@ -464,7 +549,7 @@ export const post_controller = {
 
       return createSuccessResponse(
         200,
-        "Posts with comments retrieved successfully",
+        "Posts with comments and images retrieved successfully",
         rows
       );
     } catch (error) {
@@ -482,26 +567,42 @@ export const post_controller = {
       }
 
       const sql = `
-        SELECT 
-          p.post_id, 
-          p.post_name, 
-          p.post_description, 
-          p.post_timestamp, 
-          p.user_id, 
-          p.is_active,
-          (
-            SELECT JSON_ARRAYAGG(
-              JSON_OBJECT(
-                'post_image_id', i.post_image_id,
-                'post_image_path', i.post_image_path
-              )
+      SELECT 
+        p.post_id, 
+        p.post_name, 
+        p.post_description, 
+        p.post_timestamp, 
+        p.user_id, 
+        p.is_active,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'post_image_id', i.post_image_id,
+              'post_image_path', i.post_image_path,
+              'post_image_description', i.post_image_description  -- ✅ เพิ่ม description
             )
-            FROM post_image i
-            WHERE i.post_id = p.post_id
-          ) AS images
-        FROM post p
-        WHERE p.post_id = ?
-      `;
+          )
+          FROM post_image i
+          WHERE i.post_id = p.post_id
+        ) AS images,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'comment_id', c.comment_id,
+              'comment_text', c.comment_text,
+              'comment_image_path', c.comment_image_path,
+              'comment_timestamp', c.comment_timestamp,
+              'user_id', u.user_id,
+              'user_name', u.user_name
+            )
+          )
+          FROM comment c
+          JOIN user u ON u.user_id = c.user_id
+          WHERE c.post_id = p.post_id
+        ) AS comments
+      FROM post p
+      WHERE p.post_id = ?
+    `;
 
       const [rows]: any = await pool.query(sql, [postId]);
 
@@ -534,7 +635,7 @@ export const post_controller = {
       const postId = parseInt(ctx.params.id);
       if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
 
-      // ตรวจสอบว่าโพสต์นี้เป็นของ user จริงไหม
+      // ✅ ตรวจสอบว่าโพสต์นี้เป็นของ user ที่ล็อกอินอยู่จริงไหม
       const [postRows]: any = await pool.query(
         `SELECT user_id FROM post WHERE post_id = ?`,
         [postId]
@@ -547,14 +648,21 @@ export const post_controller = {
         );
       }
 
+      // ✅ อ่านข้อมูลจาก FormData
       const formData = await ctx.request.formData();
       const post_name = formData.get("post_name")?.toString();
       const post_description = formData.get("post_description")?.toString();
       const post_timestamp_input = formData.get("post_timestamp")?.toString();
-      const files = formData.getAll("post_images");
+      const files = formData.getAll("post_images") || [];
+      const imageDescriptions =
+        formData.getAll("post_image_descriptions") || []; // ✅ คำอธิบายของรูปใหม่
+
       const keepImageIds = formData
         .getAll("keep_image_ids")
-        .map((id) => parseInt(id.toString()));
+        .map((id) => parseInt(id.toString()))
+        .filter((id) => !isNaN(id));
+
+      const updatedDescriptions = formData.getAll("update_descriptions") || []; // ✅ สำหรับอัปเดตคำอธิบายของรูปเก่า
 
       if (!post_name || !post_description) {
         return createErrorResponse(400, "Missing required fields");
@@ -562,12 +670,15 @@ export const post_controller = {
 
       const post_timestamp = formatTimestamp(post_timestamp_input);
 
+      // ✅ อัปเดตข้อมูลโพสต์
       await pool.query(
-        `UPDATE post SET post_name = ?, post_description = ?, post_timestamp = ? WHERE post_id = ?`,
+        `UPDATE post 
+       SET post_name = ?, post_description = ?, post_timestamp = ? 
+       WHERE post_id = ?`,
         [post_name, post_description, post_timestamp, postId]
       );
 
-      // ✅ ลบรูปเก่าที่ไม่ได้เลือก keep
+      // ✅ ลบรูปเก่าที่ไม่ได้ keep
       const [currentImages]: any = await pool.query(
         `SELECT post_image_id, post_image_path FROM post_image WHERE post_id = ?`,
         [postId]
@@ -582,11 +693,30 @@ export const post_controller = {
         });
       await Promise.all(deletePromises);
 
-      // ✅ บันทึกรูปใหม่
-      const saveImagePromises = files.map((file: any) =>
-        saveImageFile(file, postId)
-      );
-      await Promise.all(saveImagePromises);
+      // ✅ บันทึกคำอธิบายใหม่ให้รูปเก่าที่เลือก keep
+      for (let i = 0; i < keepImageIds.length; i++) {
+        const desc = updatedDescriptions[i]?.toString().trim() || null;
+        await pool.query(
+          `UPDATE post_image 
+         SET post_image_description = ? 
+         WHERE post_image_id = ? AND post_id = ?`,
+          [desc, keepImageIds[i], postId]
+        );
+      }
+
+      // ✅ บันทึกรูปใหม่พร้อมคำอธิบายใหม่
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const desc = imageDescriptions[i]?.toString().trim() || null;
+        // @ts-ignore
+        if (
+          !file ||
+          typeof file === "string" ||
+          typeof file.arrayBuffer !== "function"
+        )
+          continue;
+        await saveImageFile(file, postId, desc);
+      }
 
       return createSuccessResponse(200, "Post updated successfully");
     } catch (error) {
@@ -613,14 +743,14 @@ export const post_controller = {
       const postId = parseInt(ctx.params.id);
       if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
 
-      // ตรวจสอบว่าโพสต์มีจริงไหม
+      // ✅ ตรวจสอบว่าโพสต์มีอยู่จริง
       const [postRows]: any = await pool.query(
         `SELECT user_id FROM post WHERE post_id = ?`,
         [postId]
       );
       if (!postRows.length) return createErrorResponse(404, "Post not found");
 
-      // ตรวจสอบสิทธิ์
+      // ✅ ตรวจสอบสิทธิ์ผู้ใช้ (เจ้าของโพสต์หรือแอดมิน)
       const [userRows]: any = await pool.query(
         `SELECT is_admin FROM user WHERE user_id = ?`,
         [userIdFromToken]
@@ -638,22 +768,23 @@ export const post_controller = {
           "You are not allowed to delete this post"
         );
 
-      // ✅ ลบไฟล์จริงก่อน
+      // ✅ ลบไฟล์รูปภาพจริงในเครื่อง (รวมถึงรูปที่มี description)
       const [images]: any = await pool.query(
         `SELECT post_image_path FROM post_image WHERE post_id = ?`,
         [postId]
       );
+
       const deleteFilePromises = images.map((image: any) =>
         deleteImageFile(image.post_image_path)
       );
       await Promise.all(deleteFilePromises);
 
-      // ✅ ลบข้อมูลในตารางลูกที่อ้างถึง post_id
+      // ✅ ลบข้อมูลในตารางลูกที่อ้างอิง post_id
       await pool.query(`DELETE FROM comment WHERE post_id = ?`, [postId]);
       await pool.query(`DELETE FROM post_rating WHERE post_id = ?`, [postId]);
       await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [postId]);
 
-      // ✅ ลบโพสต์หลัก
+      // ✅ ลบโพสต์หลักออกจากตาราง post
       await pool.query(`DELETE FROM post WHERE post_id = ?`, [postId]);
 
       return createSuccessResponse(200, "Post deleted successfully");
@@ -667,28 +798,44 @@ export const post_controller = {
     try {
       const sql = `
       SELECT 
-    p.post_id,
-    p.post_name,
-    p.post_description,
-    p.post_timestamp,
-    u.user_id,
-    u.user_name,
-    u.user_username,
-    COALESCE(p.is_active, 0) AS is_active,
-    (
-      SELECT JSON_ARRAYAGG(
-        JSON_OBJECT(
-          'post_image_id', i.post_image_id,
-          'post_image_path', i.post_image_path
-        )
-      )
-      FROM post_image i
-      WHERE i.post_id = p.post_id
-    ) AS images
-  FROM \`user\` u
-  INNER JOIN post p ON u.user_id = p.user_id
-  WHERE COALESCE(p.is_active, 0) = 1
-  ORDER BY p.post_timestamp DESC
+        p.post_id,
+        p.post_name,
+        p.post_description,
+        p.post_timestamp,
+        u.user_id,
+        u.user_name,
+        u.user_username,
+        COALESCE(p.is_active, 0) AS is_active,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'post_image_id', i.post_image_id,
+              'post_image_path', i.post_image_path,
+              'post_image_description', i.post_image_description  -- ✅ เพิ่มคำอธิบายรูปภาพ
+            )
+          )
+          FROM post_image i
+          WHERE i.post_id = p.post_id
+        ) AS images,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'comment_id', c.comment_id,
+              'comment_text', c.comment_text,
+              'comment_image_path', c.comment_image_path,
+              'comment_timestamp', c.comment_timestamp,
+              'user_id', u2.user_id,
+              'user_name', u2.user_name
+            )
+          )
+          FROM comment c
+          JOIN user u2 ON u2.user_id = c.user_id
+          WHERE c.post_id = p.post_id
+        ) AS comments
+      FROM user u
+      INNER JOIN post p ON u.user_id = p.user_id
+      WHERE COALESCE(p.is_active, 0) = 1
+      ORDER BY p.post_timestamp DESC
     `;
 
       const [rows]: any = await pool.query(sql);

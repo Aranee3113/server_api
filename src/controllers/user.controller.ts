@@ -192,12 +192,21 @@ export const user_controller = {
         hashedPassword = await bcrypt.hash(user_password, 10);
       }
 
-      // ดึง path รูปเก่า
+      // ✅ ดึงข้อมูลเดิมของผู้ใช้ (รวม is_admin และรูปเก่า)
       const [rows]: any = await pool.query(
-        `SELECT user_image_path FROM user WHERE user_id = ?`,
+        `SELECT user_image_path, is_admin FROM user WHERE user_id = ?`,
         [userId]
       );
+      if (!rows.length) {
+        return {
+          status: 404,
+          success: false,
+          message: "User not found",
+        };
+      }
+
       const oldImagePath = rows[0]?.user_image_path;
+      const currentIsAdmin = rows[0]?.is_admin ?? 0; // ✅ ใช้ค่าเดิมของ is_admin
 
       if (user_image && user_image.size > 0) {
         imagePath = await saveUserImage(user_image);
@@ -217,8 +226,9 @@ export const user_controller = {
         values.push(imagePath);
       }
 
+      // ✅ เก็บสถานะแอดมินเดิมไว้ (ไม่เปลี่ยน)
       fields.push("is_admin = ?");
-      values.push(0, userId);
+      values.push(currentIsAdmin, userId);
 
       const sql = `UPDATE user SET ${fields.join(", ")} WHERE user_id = ?`;
       await pool.query(sql, values);
@@ -258,7 +268,7 @@ export const user_controller = {
       if (isNaN(targetUserId))
         return createErrorResponse(400, "Invalid user ID");
 
-      // ✅ ตรวจสอบว่า user มีอยู่จริงไหม
+      // ตรวจสอบว่า user มีอยู่จริงไหม
       const [userRows]: any = await pool.query(
         `SELECT user_id, is_admin, user_image_path FROM user WHERE user_id = ?`,
         [targetUserId]
@@ -275,25 +285,25 @@ export const user_controller = {
       const isAdmin = requesterRows[0].is_admin === 1;
       const isSelf = Number(userIdFromToken) === Number(targetUserId);
 
-      // ✅ ตรวจสิทธิ์: ตัวเองลบตัวเองได้ / admin ลบใครก็ได้
+      // ตรวจสิทธิ์: ตัวเองลบตัวเองได้ / admin ลบใครก็ได้
       if (!isAdmin && !isSelf)
         return createErrorResponse(
           403,
           "You are not allowed to delete this user"
         );
 
-      // ✅ ดึงข้อมูลภาพของ user เพื่อทำการลบไฟล์จริง
+      // ดึงข้อมูลภาพของ user เพื่อทำการลบไฟล์จริง
       const userImagePath = userRows[0]?.user_image_path;
       if (userImagePath) await deleteUserImage(userImagePath);
 
-      // ✅ ลบข้อมูลในตารางลูกที่อ้างถึง user_id (เช่น post, comment, rating)
+      // ลบข้อมูลในตารางลูกที่อ้างถึง user_id (เช่น post, comment, rating)
       await pool.query(`DELETE FROM comment WHERE user_id = ?`, [targetUserId]);
       await pool.query(`DELETE FROM post_rating WHERE user_id = ?`, [
         targetUserId,
       ]);
       await pool.query(`DELETE FROM post WHERE user_id = ?`, [targetUserId]);
 
-      // ✅ ลบ user หลัก
+      // ลบ user หลัก
       await pool.query(`DELETE FROM user WHERE user_id = ?`, [targetUserId]);
 
       return createSuccessResponse(200, "User deleted successfully");
