@@ -99,51 +99,27 @@ const deleteImageFile = async (imagePath: string): Promise<void> => {
 };
 
 export const post_controller = {
-  getvideo: async (_ctx: any): Promise<ApiResponse> => {
-    try {
-      const sql = `
-      SELECT
-        p.post_id,
-        p.post_name,
-        p.post_description,
-        p.post_timestamp,
-        p.is_video,
-        u.user_id,
-        u.user_name,
-        u.user_username,
-        (
-          SELECT JSON_ARRAYAGG(
-            JSON_OBJECT(
-              'post_image_id', i.post_image_id,
-              'post_image_path', i.post_image_path,
-              'post_image_description', i.post_image_description  -- ✅ เพิ่มคำอธิบายภาพ/วิดีโอ
-            )
-          )
-          FROM post_image i
-          WHERE i.post_id = p.post_id
-        ) AS images
-      FROM post p
-      INNER JOIN user u ON u.user_id = p.user_id
-      WHERE p.is_video = 1
-      ORDER BY p.post_timestamp DESC
-    `;
-
-      const [rows]: any = await pool.query(sql);
-
-      if (!rows || rows.length === 0) {
-        return createSuccessResponse(204, "No video posts found", []);
-      }
-
-      return createSuccessResponse(
-        200,
-        "Video posts retrieved successfully",
-        rows
-      );
-    } catch (error) {
-      console.error("Error getting video posts:", error);
-      return createErrorResponse(500, "Internal server error");
-    }
-  },
+  getvideo: async (_ctx: any) => {
+  try {
+    const sql = `
+        SELECT
+          p.post_id, p.post_name, p.post_description, p.post_timestamp, p.user_id, p.is_active, p.is_video,
+          (
+            SELECT JSON_ARRAYAGG( JSON_OBJECT('post_image_id', i.post_image_id, 'post_image_path', i.post_image_path) )
+            FROM post_image i WHERE i.post_id = p.post_id
+          ) AS videos
+        FROM post p
+        WHERE p.is_video = 1
+        GROUP BY p.post_id
+        ORDER BY p.post_timestamp DESC
+      `;
+    const [rows]: any = await pool.query(sql);
+    return createSuccessResponse(200, "Video posts retrieved", rows || []);
+  } catch (error) {
+    console.error("Error getting video posts:", error);
+    return createErrorResponse(500, "Internal server error");
+  }
+},
 
   createvideo: async (ctx: any) => {
     try {
