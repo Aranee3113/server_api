@@ -8,11 +8,12 @@ import { ratingRoute } from "./rating.route";
 const r = new Elysia();
 
 r.group("/api", (app) =>
-  app.use(user_route)
-     .use(auth_route)
-     .use(postRoutes)
-     .use(commentRoutes)
-     .use(ratingRoute)
+  app
+    .use(user_route)
+    .use(auth_route)
+    .use(postRoutes)
+    .use(commentRoutes)
+    .use(ratingRoute)
 );
 
 export default r;
