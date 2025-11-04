@@ -19,3 +19,4 @@ export const postRoutes = new Elysia({ prefix: "/post" })
   .post("/video", post_controller.createvideo)
   .put("/video/:id", post_controller.updatevideoById)
   .delete("/video/:id", post_controller.deletevideoById)
+  
