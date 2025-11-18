@@ -1,0 +1,40 @@
+version: '3.8'
+services:
+  mysql:
+    image: mysql:5.7
+    container_name: maikamear
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: maikamear-db
+      MYSQL_USER: maikamear
+      MYSQL_PASSWORD: 123456
+    ports:
+      - "3388:3306"
+    volumes:
+      - mysql_maikamear:/var/lib/mysql
+    networks:
+      - maikamear-net
+
+  myadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: maikamear-admin
+    restart: always
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: maikamear
+      PMA_PASSWORD: 123456
+    ports:
+      - "8080:80"
+    depends_on:
+      - mysql
+    networks:
+      - maikamear-net
+
+volumes:
+  mysql_maikamear:
+
+networks:
+  maikamear-net:
+    external: true

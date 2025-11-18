@@ -1,0 +1,865 @@
+import { pool } from "../utils/db";
+import { format } from "date-fns";
+import { writeFile, unlink } from "fs/promises";
+import path from "path";
+import { v4 as uuidv4 } from "uuid";
+import { jwtDecode } from "jwt-decode";
+
+interface PostData {
+  post_id?: number;
+  post_name: string;
+  post_description: string;
+  post_timestamp: string;
+  user_id: string;
+  is_active?: number | null;
+  images?: Array<{
+    post_image_id: number;
+    post_image_path: string;
+    post_image_description?: string | null;
+  }>;
+}
+
+interface ApiResponse<T = any> {
+  status: number;
+  success: boolean;
+  message: string;
+  data?: T;
+}
+
+const generateUniqueFilename = (originalName: string): string => {
+  const ext = path.extname(originalName);
+  const uuid = uuidv4();
+  return `${uuid}${ext}`;
+};
+
+const formatTimestamp = (timestamp?: string): string => {
+  return timestamp
+    ? format(new Date(timestamp), "yyyy-MM-dd HH:mm:ss")
+    : format(new Date(), "yyyy-MM-dd HH:mm:ss");
+};
+
+const createErrorResponse = (status: number, message: string): ApiResponse => ({
+  status,
+  success: false,
+  message,
+});
+
+const createSuccessResponse = (
+  status: number,
+  message: string,
+  data?: any
+): ApiResponse => ({
+  status,
+  success: true,
+  message,
+  ...(data && { data }),
+});
+
+const saveImageFile = async (
+  file: any,
+  postId: number,
+  description?: string | null
+): Promise<{
+  post_image_id: number;
+  post_image_path: string;
+  post_image_description?: string | null;
+} | null> => {
+  if (!file || !file.name || !file.size) return null;
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const filename = generateUniqueFilename(file.name);
+  const filepath = path.join(
+    process.cwd(),
+    "public",
+    "uploads",
+    "post",
+    filename
+  );
+
+  await writeFile(filepath, buffer);
+
+  const filename_insert = "/uploads/post/" + filename;
+
+  const [result]: any = await pool.query(
+    `INSERT INTO post_image (post_id, post_image_path, post_image_description)
+     VALUES (?, ?, ?)`,
+    [postId, filename_insert, description || null]
+  );
+
+  return {
+    post_image_id: result.insertId,
+    post_image_path: filename_insert,
+    post_image_description: description || null,
+  };
+};
+
+const deleteImageFile = async (imagePath: string): Promise<void> => {
+  const filepath = path.join(process.cwd(), "public", imagePath);
+  await unlink(filepath).catch(() => {});
+};
+
+export const post_controller = {
+  getvideo: async (_ctx: any) => {
+  try {
+    const sql = `
+        SELECT
+          p.post_id, p.post_name, p.post_description, p.post_timestamp, p.user_id, p.is_active, p.is_video,
+          (
+            SELECT JSON_ARRAYAGG( JSON_OBJECT('post_image_id', i.post_image_id, 'post_image_path', i.post_image_path) )
+            FROM post_image i WHERE i.post_id = p.post_id
+          ) AS videos
+        FROM post p
+        WHERE p.is_video = 1
+        GROUP BY p.post_id
+        ORDER BY p.post_timestamp DESC
+      `;
+    const [rows]: any = await pool.query(sql);
+    return createSuccessResponse(200, "Video posts retrieved", rows || []);
+  } catch (error) {
+    console.error("Error getting video posts:", error);
+    return createErrorResponse(500, "Internal server error");
+  }
+},
+
+  createvideo: async (ctx: any) => {
+    try {
+      const authHeader = ctx.headers?.authorization;
+
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+
+      const formData = await ctx.request.formData();
+
+      const post_name = formData.get("post_name")?.toString().trim();
+      const post_description = formData
+        .get("post_description")
+        ?.toString()
+        .trim();
+      const videos = formData.getAll("video_files") || [];
+
+      if (!post_name || !post_description)
+        return createErrorResponse(400, "Missing required fields");
+
+      const user_id = decoded.userId;
+      const post_timestamp = format(new Date(), "yyyy-MM-dd HH:mm:ss");
+
+      const hasVideo = videos.some((file: any) =>
+        file?.name?.toLowerCase().endsWith(".mp4")
+      );
+
+      const [result]: any = await pool.query(
+        `INSERT INTO post (post_name, post_description, post_timestamp, user_id, is_active, is_video)
+         VALUES (?, ?, ?, ?, 0, ?)`,
+        [
+          post_name,
+          post_description,
+          post_timestamp,
+          user_id,
+          hasVideo ? 1 : null,
+        ]
+      );
+
+      const postId = result.insertId;
+      const videoData: any[] = [];
+
+      for (const file of videos) {
+        // @ts-ignore
+        if (!file || typeof file.arrayBuffer !== "function") continue;
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const ext = path.extname(file.name).toLowerCase();
+        if (ext !== ".mp4") continue;
+
+        const filename = `${uuidv4()}${ext}`;
+        const filepath = path.join(
+          process.cwd(),
+          "public",
+          "uploads",
+          "videos",
+          filename
+        );
+        await writeFile(filepath, buffer);
+
+        const filepathForDB = "/uploads/videos/" + filename;
+        const [insertVideo]: any = await pool.query(
+          `INSERT INTO post_image (post_id, post_image_path) VALUES (?, ?)`,
+          [postId, filepathForDB]
+        );
+
+        videoData.push({
+          post_image_id: insertVideo.insertId,
+          post_image_path: filepathForDB,
+        });
+      }
+
+      return createSuccessResponse(201, "Video created successfully", {
+        post_id: postId,
+        post_name,
+        post_description,
+        post_timestamp,
+        user_id,
+        is_video: hasVideo ? 1 : null,
+        videos: videoData,
+      });
+    } catch (error) {
+      console.error("Error creating video:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+  updatevideoById: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const { id } = ctx.params;
+      if (!id) return createErrorResponse(400, "Missing video ID");
+
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+
+      const formData = await ctx.request.formData();
+      const post_name = formData.get("post_name")?.toString().trim();
+      const post_description = formData
+        .get("post_description")
+        ?.toString()
+        .trim();
+      const videos = formData.getAll("video_files") || [];
+      const videoDescriptions = formData.getAll("video_descriptions") || []; // ✅ เพิ่มฟิลด์คำอธิบายวิดีโอ
+
+      if (!post_name && !post_description && videos.length === 0)
+        return createErrorResponse(400, "No data to update");
+
+      const post_timestamp = format(new Date(), "yyyy-MM-dd HH:mm:ss");
+
+      // ✅ ดึงวิดีโอเดิมจาก DB เพื่อลบถ้ามีการอัปโหลดใหม่
+      const [oldVideos]: any = await pool.query(
+        `SELECT post_image_id, post_image_path FROM post_image WHERE post_id = ?`,
+        [id]
+      );
+
+      const newVideoData: any[] = [];
+
+      if (videos.length > 0) {
+        // ✅ ลบไฟล์วิดีโอเก่าทั้งหมด
+        for (const old of oldVideos) {
+          const oldPath = path.join(
+            process.cwd(),
+            "public",
+            old.post_image_path
+          );
+          await unlink(oldPath).catch(() => {});
+          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [
+            old.post_image_id,
+          ]);
+        }
+
+        // ✅ เพิ่มไฟล์ใหม่พร้อมคำอธิบาย
+        for (let i = 0; i < videos.length; i++) {
+          const file = videos[i];
+          const desc = videoDescriptions[i]?.toString().trim() || null;
+
+          // @ts-ignore
+          if (!file || typeof file.arrayBuffer !== "function") continue;
+
+          const buffer = Buffer.from(await file.arrayBuffer());
+          const ext = path.extname(file.name || "video.mp4").toLowerCase();
+          if (ext !== ".mp4") continue;
+
+          const filename = `${uuidv4()}${ext}`;
+          const filepath = path.join(
+            process.cwd(),
+            "public",
+            "uploads",
+            "videos",
+            filename
+          );
+          await writeFile(filepath, buffer);
+
+          const filepathForDB = "/uploads/videos/" + filename;
+
+          const [insertVideo]: any = await pool.query(
+            `INSERT INTO post_image (post_id, post_image_path, post_image_description)
+           VALUES (?, ?, ?)`,
+            [id, filepathForDB, desc]
+          );
+
+          newVideoData.push({
+            post_image_id: insertVideo.insertId,
+            post_image_path: filepathForDB,
+            post_image_description: desc,
+          });
+        }
+
+        // ✅ มีวิดีโอใหม่ → ตั้งค่า is_video = 1
+        await pool.query(
+          `UPDATE post 
+         SET post_name = ?, post_description = ?, post_timestamp = ?, is_video = 1 
+         WHERE post_id = ?`,
+          [post_name, post_description, post_timestamp, id]
+        );
+      } else {
+        // ✅ ไม่มีไฟล์ใหม่ → แก้ไขเฉพาะชื่อและคำอธิบายโพสต์
+        await pool.query(
+          `UPDATE post 
+         SET post_name = ?, post_description = ?, post_timestamp = ? 
+         WHERE post_id = ?`,
+          [post_name, post_description, post_timestamp, id]
+        );
+      }
+
+      return createSuccessResponse(200, "Video updated successfully", {
+        post_id: id,
+        post_name,
+        post_description,
+        post_timestamp,
+        is_video: videos.length > 0 ? 1 : null,
+        videos: newVideoData,
+      });
+    } catch (error) {
+      console.error("Error updating video:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+  deletevideoById: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const { id } = ctx.params;
+
+      // ✅ ตรวจสอบ token
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+
+      const userIdFromToken = decoded.userId;
+
+      // ✅ ตรวจสอบว่าโพสต์มีอยู่ไหม
+      const [postRows]: any = await pool.query(
+        `SELECT user_id FROM post WHERE post_id = ? AND is_video = 1`,
+        [id]
+      );
+      if (!postRows.length)
+        return createErrorResponse(404, "Video post not found");
+
+      // ✅ ตรวจสอบสิทธิ์ (เฉพาะเจ้าของหรือแอดมิน)
+      const [userRows]: any = await pool.query(
+        `SELECT is_admin FROM user WHERE user_id = ?`,
+        [userIdFromToken]
+      );
+
+      if (!userRows.length)
+        return createErrorResponse(403, "User not found or inactive");
+
+      const isAdmin = userRows[0].is_admin === 1;
+      const isOwner = Number(postRows[0].user_id) === Number(userIdFromToken);
+      if (!isOwner && !isAdmin)
+        return createErrorResponse(
+          403,
+          "You are not allowed to delete this video"
+        );
+
+      // ✅ ดึง path ของวิดีโอทั้งหมด
+      const [videos]: any = await pool.query(
+        `SELECT post_image_path FROM post_image WHERE post_id = ?`,
+        [id]
+      );
+
+      // ✅ ลบไฟล์จริงจากโฟลเดอร์
+      for (const v of videos) {
+        const fullPath = path.join(process.cwd(), "public", v.post_image_path);
+        await unlink(fullPath).catch(() => {});
+      }
+
+      // ✅ ลบข้อมูลที่เกี่ยวข้องในฐานข้อมูล
+      await pool.query(`DELETE FROM comment WHERE post_id = ?`, [id]);
+      await pool.query(`DELETE FROM post_rating WHERE post_id = ?`, [id]);
+      await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [id]);
+      await pool.query(`DELETE FROM post WHERE post_id = ?`, [id]);
+
+      return createSuccessResponse(200, "Video deleted successfully");
+    } catch (error: any) {
+      console.error("Error deleting video:", error.message || error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+  createpost: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader) {
+        return createErrorResponse(401, "Missing authorization header");
+      }
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+
+      const formData = await ctx.request.formData();
+      const post_name = formData.get("post_name")?.toString().trim();
+      const post_description = formData
+        .get("post_description")
+        ?.toString()
+        .trim();
+
+      if (!post_name || !post_description) {
+        return createErrorResponse(400, "Missing required fields");
+      }
+
+      const user_id = decoded.userId;
+      const images = formData.getAll("post_images") || [];
+      const imageDescriptions =
+        formData.getAll("post_image_descriptions") || []; // ✅ เพิ่มบรรทัดนี้
+      const post_timestamp = formatTimestamp();
+
+      const [result]: any = await pool.query(
+        `INSERT INTO post (post_name, post_description, post_timestamp, user_id, is_active)
+       VALUES (?, ?, ?, ?, 0)`,
+        [post_name, post_description, post_timestamp, user_id]
+      );
+
+      const postId = result.insertId;
+      const imageData: any[] = [];
+
+      // ✅ วนลูปทั้งภาพและคำอธิบายพร้อมกัน
+      for (let i = 0; i < images.length; i++) {
+        const file = images[i];
+        const desc = imageDescriptions[i]?.toString().trim() || null;
+
+        // @ts-ignore
+        if (
+          !file ||
+          typeof file === "string" ||
+          typeof file.arrayBuffer !== "function"
+        )
+          continue;
+
+        const image = await saveImageFile(file, postId, desc); // ✅ ส่ง desc ไปด้วย
+        if (image) imageData.push(image);
+      }
+
+      return createSuccessResponse(201, "Post created successfully", {
+        post_id: postId,
+        post_name,
+        post_description,
+        post_timestamp,
+        user_id,
+        is_active: 0,
+        images: imageData,
+      });
+    } catch (error) {
+      console.error("Error creating post:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+  getAllposts: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const sql = `
+      SELECT 
+        p.post_id, 
+        p.post_name, 
+        p.post_description, 
+        p.post_timestamp, 
+        p.user_id, 
+        p.is_active,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'post_image_id', i.post_image_id,
+              'post_image_path', i.post_image_path,
+              'post_image_description', i.post_image_description
+            )
+          )
+          FROM post_image i
+          WHERE i.post_id = p.post_id
+        ) AS images,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'comment_id', c.comment_id,
+              'comment_text', c.comment_text,
+              'comment_image_path', c.comment_image_path,
+              'comment_timestamp', c.comment_timestamp,
+              'user_id', u.user_id,
+              'user_name', u.user_name
+            )
+          )
+          FROM comment c
+          JOIN user u ON u.user_id = c.user_id
+          WHERE c.post_id = p.post_id 
+        ) AS comments
+      FROM post p
+      ORDER BY p.post_timestamp DESC
+    `;
+
+      const [rows]: any = await pool.query(sql);
+
+      if (!rows || rows.length === 0) {
+        return createSuccessResponse(204, "No posts found", []);
+      }
+
+      return createSuccessResponse(
+        200,
+        "Posts with comments and images retrieved successfully",
+        rows
+      );
+    } catch (error) {
+      console.error("Error getting all posts with comments:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+  getpostById: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const postId = parseInt(ctx.params.id);
+
+      if (isNaN(postId)) {
+        return createErrorResponse(400, "Invalid post ID");
+      }
+
+      const sql = `
+      SELECT 
+        p.post_id, 
+        p.post_name, 
+        p.post_description, 
+        p.post_timestamp, 
+        p.user_id, 
+        p.is_active,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'post_image_id', i.post_image_id,
+              'post_image_path', i.post_image_path,
+              'post_image_description', i.post_image_description  -- ✅ เพิ่ม description
+            )
+          )
+          FROM post_image i
+          WHERE i.post_id = p.post_id
+        ) AS images,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'comment_id', c.comment_id,
+              'comment_text', c.comment_text,
+              'comment_image_path', c.comment_image_path,
+              'comment_timestamp', c.comment_timestamp,
+              'user_id', u.user_id,
+              'user_name', u.user_name
+            )
+          )
+          FROM comment c
+          JOIN user u ON u.user_id = c.user_id
+          WHERE c.post_id = p.post_id
+        ) AS comments
+      FROM post p
+      WHERE p.post_id = ?
+    `;
+
+      const [rows]: any = await pool.query(sql, [postId]);
+
+      if (!rows || rows.length === 0) {
+        return createErrorResponse(404, "Post not found");
+      }
+
+      return createSuccessResponse(200, "Post retrieved successfully", rows[0]);
+    } catch (error) {
+      console.error("Error getting post by ID:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+  updatepostById: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+      const userIdFromToken = decoded.userId;
+
+      const postId = parseInt(ctx.params.id);
+      if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
+
+      // ✅ ตรวจสอบว่าโพสต์นี้เป็นของ user ที่ล็อกอินอยู่จริงไหม
+      const [postRows]: any = await pool.query(
+        `SELECT user_id FROM post WHERE post_id = ?`,
+        [postId]
+      );
+      if (!postRows.length) return createErrorResponse(404, "Post not found");
+      if (postRows[0].user_id !== userIdFromToken) {
+        return createErrorResponse(
+          403,
+          "You are not allowed to edit this post"
+        );
+      }
+
+      // ✅ อ่านข้อมูลจาก FormData
+      const formData = await ctx.request.formData();
+      const post_name = formData.get("post_name")?.toString();
+      const post_description = formData.get("post_description")?.toString();
+      const post_timestamp_input = formData.get("post_timestamp")?.toString();
+      const files = formData.getAll("post_images") || [];
+      const imageDescriptions =
+        formData.getAll("post_image_descriptions") || []; // ✅ คำอธิบายของรูปใหม่
+
+      const keepImageIds = formData
+        .getAll("keep_image_ids")
+        .map((id) => parseInt(id.toString()))
+        .filter((id) => !isNaN(id));
+
+      const updatedDescriptions = formData.getAll("update_descriptions") || []; // ✅ สำหรับอัปเดตคำอธิบายของรูปเก่า
+
+      if (!post_name || !post_description) {
+        return createErrorResponse(400, "Missing required fields");
+      }
+
+      const post_timestamp = formatTimestamp(post_timestamp_input);
+
+      // ✅ อัปเดตข้อมูลโพสต์
+      await pool.query(
+        `UPDATE post 
+       SET post_name = ?, post_description = ?, post_timestamp = ? 
+       WHERE post_id = ?`,
+        [post_name, post_description, post_timestamp, postId]
+      );
+
+      // ✅ ลบรูปเก่าที่ไม่ได้ keep
+      const [currentImages]: any = await pool.query(
+        `SELECT post_image_id, post_image_path FROM post_image WHERE post_id = ?`,
+        [postId]
+      );
+      const deletePromises = currentImages
+        .filter((img: any) => !keepImageIds.includes(img.post_image_id))
+        .map(async (img: any) => {
+          await deleteImageFile(img.post_image_path);
+          await pool.query(`DELETE FROM post_image WHERE post_image_id = ?`, [
+            img.post_image_id,
+          ]);
+        });
+      await Promise.all(deletePromises);
+
+      // ✅ บันทึกคำอธิบายใหม่ให้รูปเก่าที่เลือก keep
+      for (let i = 0; i < keepImageIds.length; i++) {
+        const desc = updatedDescriptions[i]?.toString().trim() || null;
+        await pool.query(
+          `UPDATE post_image 
+         SET post_image_description = ? 
+         WHERE post_image_id = ? AND post_id = ?`,
+          [desc, keepImageIds[i], postId]
+        );
+      }
+
+      // ✅ บันทึกรูปใหม่พร้อมคำอธิบายใหม่
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const desc = imageDescriptions[i]?.toString().trim() || null;
+        // @ts-ignore
+        if (
+          !file ||
+          typeof file === "string" ||
+          typeof file.arrayBuffer !== "function"
+        )
+          continue;
+        await saveImageFile(file, postId, desc);
+      }
+
+      return createSuccessResponse(200, "Post updated successfully");
+    } catch (error) {
+      console.error("Error updating post:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+  deletepostById: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const authHeader = ctx.headers?.authorization;
+      if (!authHeader)
+        return createErrorResponse(401, "Missing authorization header");
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwtDecode(token);
+      } catch {
+        return createErrorResponse(401, "Invalid token");
+      }
+
+      const userIdFromToken = decoded.userId;
+      const postId = parseInt(ctx.params.id);
+      if (isNaN(postId)) return createErrorResponse(400, "Invalid post ID");
+
+      // ✅ ตรวจสอบว่าโพสต์มีอยู่จริง
+      const [postRows]: any = await pool.query(
+        `SELECT user_id FROM post WHERE post_id = ?`,
+        [postId]
+      );
+      if (!postRows.length) return createErrorResponse(404, "Post not found");
+
+      // ✅ ตรวจสอบสิทธิ์ผู้ใช้ (เจ้าของโพสต์หรือแอดมิน)
+      const [userRows]: any = await pool.query(
+        `SELECT is_admin FROM user WHERE user_id = ?`,
+        [userIdFromToken]
+      );
+
+      if (!userRows.length)
+        return createErrorResponse(403, "User not found or inactive");
+
+      const isAdmin = userRows[0].is_admin === 1;
+      const isOwner = Number(postRows[0].user_id) === Number(userIdFromToken);
+
+      if (!isOwner && !isAdmin)
+        return createErrorResponse(
+          403,
+          "You are not allowed to delete this post"
+        );
+
+      // ✅ ลบไฟล์รูปภาพจริงในเครื่อง (รวมถึงรูปที่มี description)
+      const [images]: any = await pool.query(
+        `SELECT post_image_path FROM post_image WHERE post_id = ?`,
+        [postId]
+      );
+
+      const deleteFilePromises = images.map((image: any) =>
+        deleteImageFile(image.post_image_path)
+      );
+      await Promise.all(deleteFilePromises);
+
+      // ✅ ลบข้อมูลในตารางลูกที่อ้างอิง post_id
+      await pool.query(`DELETE FROM comment WHERE post_id = ?`, [postId]);
+      await pool.query(`DELETE FROM post_rating WHERE post_id = ?`, [postId]);
+      await pool.query(`DELETE FROM post_image WHERE post_id = ?`, [postId]);
+
+      // ✅ ลบโพสต์หลักออกจากตาราง post
+      await pool.query(`DELETE FROM post WHERE post_id = ?`, [postId]);
+
+      return createSuccessResponse(200, "Post deleted successfully");
+    } catch (error: any) {
+      console.error("Error deleting post:", error.message || error);
+      return createErrorResponse(500, error.message || "Internal server error");
+    }
+  },
+
+  getPostIsActive: async (_ctx: any): Promise<ApiResponse> => {
+    try {
+      const sql = `
+      SELECT 
+        p.post_id,
+        p.post_name,
+        p.post_description,
+        p.post_timestamp,
+        u.user_id,
+        u.user_name,
+        u.user_username,
+        COALESCE(p.is_active, 0) AS is_active,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'post_image_id', i.post_image_id,
+              'post_image_path', i.post_image_path,
+              'post_image_description', i.post_image_description  -- ✅ เพิ่มคำอธิบายรูปภาพ
+            )
+          )
+          FROM post_image i
+          WHERE i.post_id = p.post_id
+        ) AS images,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'comment_id', c.comment_id,
+              'comment_text', c.comment_text,
+              'comment_image_path', c.comment_image_path,
+              'comment_timestamp', c.comment_timestamp,
+              'user_id', u2.user_id,
+              'user_name', u2.user_name
+            )
+          )
+          FROM comment c
+          JOIN user u2 ON u2.user_id = c.user_id
+          WHERE c.post_id = p.post_id
+        ) AS comments
+      FROM user u
+      INNER JOIN post p ON u.user_id = p.user_id
+      WHERE COALESCE(p.is_active, 0) = 1
+      ORDER BY p.post_timestamp DESC
+    `;
+
+      const [rows]: any = await pool.query(sql);
+
+      return createSuccessResponse(
+        200,
+        rows?.length
+          ? "Active posts retrieved successfully"
+          : "No active posts found",
+        rows || []
+      );
+    } catch (error) {
+      console.error("Error getting active posts:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+
+  updateStatusActive: async (ctx: any): Promise<ApiResponse> => {
+    try {
+      const postId = Number(ctx.params.id);
+      if (Number.isNaN(postId)) {
+        return createErrorResponse(400, "Invalid post ID");
+      }
+
+      const [result]: any = await pool.query(
+        `UPDATE post
+       SET is_active = CASE WHEN COALESCE(is_active,0) = 1 THEN 0 ELSE 1 END
+       WHERE post_id = ?`,
+        [postId]
+      );
+
+      if (!result || result.affectedRows === 0) {
+        return createErrorResponse(404, "Post not found");
+      }
+
+      const [afterRows]: any = await pool.query(
+        "SELECT COALESCE(is_active,0) AS is_active FROM post WHERE post_id = ?",
+        [postId]
+      );
+      const newStatus = afterRows?.[0]?.is_active === 1 ? 1 : 0;
+
+      return createSuccessResponse(200, "Post status updated successfully", {
+        post_id: postId,
+        new_status: newStatus,
+      });
+    } catch (error) {
+      console.error("Error updating post status:", error);
+      return createErrorResponse(500, "Internal server error");
+    }
+  },
+};
