@@ -10,7 +10,6 @@ interface ApiResponse<T = any> {
   message: string;
   data?: T;
 }
-
 const createErrorResponse = (status: number, message: string): ApiResponse => ({
   status,
   success: false,
