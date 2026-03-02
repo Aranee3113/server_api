@@ -2,14 +2,12 @@ import { pool } from "../utils/db";
 import bcrypt from "bcrypt";
 
 export const auth_controller = {
-  //สมัครสมาชิก
+  // สมัครสมาชิก
   registeration: async (ctx: any) => {
     try {
-      console.log("Body received:", ctx.body);
-
       const { user_name, user_username, user_password } = ctx.body;
 
-      // 🔸 ตรวจสอบว่าข้อมูลครบไหม
+      // ตรวจสอบแค่ว่าส่งข้อมูลมาครบไหม
       if (!user_name || !user_username || !user_password) {
         return {
           status: 400,
@@ -18,23 +16,10 @@ export const auth_controller = {
         };
       }
 
-      // 🔸 ตรวจสอบความแข็งแรงของรหัสผ่าน
-      const password = user_password.trim();
-      const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
-
-      if (!passwordRegex.test(password)) {
-        return {
-          status: 400,
-          success: false,
-          message:
-            "Password must be at least 8 characters long and include both letters and numbers.",
-        };
-      }
-
-      // เข้ารหัสรหัสผ่าน
+      // ปรับใหม่: รับรหัสผ่านตรงๆ ไม่จำกัดความยาว (ตัด Regex เดิมออก)
+      const password = String(user_password);
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // บันทึกข้อมูลลงฐานข้อมูล
       const sql = `
         INSERT INTO user (user_name, user_username, user_password, is_admin)
         VALUES (?, ?, ?, 0)
@@ -72,56 +57,29 @@ export const auth_controller = {
       const data = (await body.json?.()) ?? body;
       const { user_username, user_password } = data;
 
-      // ตรวจสอบว่าข้อมูลครบไหม
-      if (!user_username || !user_password) {
-        set.status = 400;
-        return {
-          status: 400,
-          success: false,
-          message: "Missing username or password",
-        };
-      }
-
-      // ค้นหาผู้ใช้ในฐานข้อมูล
-      const sql = `
-        SELECT user_id, user_username, user_password, is_admin
-        FROM user
-        WHERE user_username = ?
-        LIMIT 1
-      `;
+      const sql = `SELECT * FROM user WHERE user_username = ? LIMIT 1`;
       const [rows]: any = await pool.query(sql, [user_username]);
 
       if (!rows || rows.length === 0) {
         set.status = 401;
-        return {
-          status: 401,
-          success: false,
-          message: "Invalid username or password",
-        };
+        return { status: 401, success: false, message: "Invalid username or password" };
       }
 
       const user = rows[0];
-
-      // ตรวจสอบรหัสผ่าน
-      const isValid = await bcrypt.compare(user_password, user.user_password);
+      // ตรวจสอบรหัสผ่าน (แปลงเป็น String ก่อน compare เพื่อความชัวร์)
+      const isValid = await bcrypt.compare(String(user_password), user.user_password);
 
       if (!isValid) {
         set.status = 401;
-        return {
-          status: 401,
-          success: false,
-          message: "Invalid username or password",
-        };
+        return { status: 401, success: false, message: "Invalid username or password" };
       }
 
-      // สร้าง JWT Token
       const token = await jwt.sign({
         userId: user.user_id,
         username: user.user_username,
         isAdmin: user.is_admin,
       });
 
-      // เก็บ Token ลง cookie
       auth.value = { authToken: token };
 
       return {
@@ -136,13 +94,8 @@ export const auth_controller = {
         },
       };
     } catch (err) {
-      console.error("Login error:", err);
       set.status = 500;
-      return {
-        status: 500,
-        success: false,
-        message: "Internal server error",
-      };
+      return { status: 500, success: false, message: "Internal server error" };
     }
   },
 };
